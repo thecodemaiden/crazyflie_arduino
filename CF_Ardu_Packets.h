@@ -20,24 +20,34 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // specialised packet types to fit in payload
 //----CLIENT SIDE----
-struct cl_toc_pkt
+struct cf_packet
 {
-	byte command;
-	byte index; // set to 0 when requesting crc
+    void pack(uint8_t *out) {};
 };
 
-struct log_var_info
+struct cl_toc_pkt 
 {
-	byte log_type;
-	byte varID;
+	uint8_t command;
+	uint8_t index; // set to 0 when requesting crc
+
+    void pack(uint8_t *out) {
+        out[0] = command;
+        out[1] = index;
+    }
+};
+
+struct log_var_info 
+{
+	uint8_t log_type;
+	uint8_t varID;
 };
 
 struct cl_log_settings
 {
-	byte command;
-	byte blockID;
+	uint8_t command;
+	uint8_t blockID;
 	union {
-		byte period;
+		uint8_t period;
 		log_var_info variables[14]; // no mem requests for now
 	};
 };
@@ -48,67 +58,69 @@ struct cl_commander
 	float pitch;
 	float yaw;
 	uint16_t thrust;
-};
 
-
-// define the packets we send
-struct cl_packet
-{
-	byte header;
-	union {
-		byte payload[31];
-		cl_toc_pkt toc;
-		cl_log_settings log_settings;
-		cl_commander setpoint;
-	};
+    void pack(uint8_t *out) {
+        memcpy(out, &roll, 4);
+        memcpy(out+4, &pitch, 4);
+        memcpy(out+8, &yaw, 4);
+        memcpy(out+12, &thrust,2);
+    }
 };
 
 // --- CRAZYFLIE SIDE ---
 
 struct cf_toc_crc_pkt
 {
-	byte command;
-	byte num;
+	uint8_t command;
+	uint8_t num;
 	uint32_t crc;
-	byte max_blocks;
-	byte max_vars;
+	uint8_t max_blocks;
+	uint8_t max_vars;
+    void unpack(uint8_t *out) {
+        memcpy(&command, out, 1);
+        memcpy(&num, out+1, 1);
+        memcpy(&crc, out+2, 4);
+        memcpy(&max_blocks, out+6, 1);
+        memcpy(&max_vars, out+7, 1);
+    }
 };
 
 struct cf_toc_item_pkt
 {
-	byte command;
-	byte index;
-	byte varType;
+	uint8_t command;
+	uint8_t index;
+	uint8_t varType;
 	char varName[28]; // there is group+var name
+    void unpack(uint8_t *out) {
+        memcpy(&command, out, 1);
+        memcpy(&index, out+1, 1);
+        memcpy(&varType, out+2, 1);
+        memcpy(varName, out+3, 28);
+    }
 };
 
 struct cf_log_settings
 {
-	byte command;
-	byte blockID;
-	byte status;
+	uint8_t command;
+	uint8_t blockID;
+	uint8_t status;
+    void unpack(uint8_t *out) {
+        memcpy(&command, out, 1);
+        memcpy(&blockID, out+1, 1);
+        memcpy(&status, out+2, 1);
+    }
 };
 
 struct cf_log_data
 {
-	byte blockID;
-	byte timestamp1;
-	byte timestamp2;
-	byte timestamp3; //sweet jesus...
-	byte values[28];
-};
-
-
-struct cf_packet
-{
-	byte header;
-	union {
-		byte payload[31];
-		cf_toc_crc_pkt crc_info;
-		cf_toc_item_pkt item_info;
-		cf_log_settings settings_resp;
-		cf_log_data data;
-	};
+	uint8_t blockID;
+	uint8_t timestamp1;
+	uint8_t timestamp2;
+	uint8_t timestamp3; //sweet jesus...
+	uint8_t values[28];
+    void unpack(uint8_t *out) {
+        //TBD
+    }
 };
 
 #endif

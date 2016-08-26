@@ -18,18 +18,24 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRA
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ***/
-
-#include <SPI.h>
-#include "nRF24L01.h"
-#include "RF24.h"
+#include <RF24/RF24.h>
 
 //#define CF_DEBUG 
 
 #ifdef CF_DEBUG
-#define debug(x) Serial.print(x)
-#define debug_hex(x) Serial.print(x, HEX)
-#define debugln(x) Serial.println(x)
-#define debugln_hex(x) Serial.println(x, HEX)
+    #if defined(ARDUINO)
+    #define debug(x) Serial.print(x)
+    #define debug_hex(x) Serial.print(x, HEX)
+    #define debugln(x) Serial.println(x)
+    #define debugln_hex(x) Serial.println(x, HEX)
+    #else
+    #define debug(x) printf("%s")
+    #define debug_hex(x) printf("%x", x)
+    #define debugln(x) printf(
+    #define debugln_hex(x) Serial.println(x, HEX)
+    
+    
+    #endif
 #else
 #define debug(x)  /* pass */
 #define debugln(x) /* pass*/
@@ -39,7 +45,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "CF_Ardu_Packets.h"
 
-//#define USE_EXT_RADIO
 
 // TODO: convert to enums
 // --- commands ---
@@ -68,7 +73,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define CHANNEL_SETTINGS 1
 #define CHANNEL_DATA 2
 
-#define USE_EXT_RADIO
+//#define USE_EXT_RADIO
 
 typedef enum {
 	DUMMY = 0,
@@ -79,15 +84,15 @@ typedef enum {
 
 // assume all CFs have the same log params...
 struct toc_item {
-	byte type;
+	uint8_t type;
 	char name[28];
-	long value; // 400 extra bytes won't kill me
+	uint32_t value; // 400 extra bytes won't kill me
 };
 //toc_item _TOC[100];
 
 /*struct log_block {
-	byte id;
-	byte vars[]
+	uint8_t id;
+	uint8_t vars[]
 };*/
 
 // Busy reasons
@@ -99,7 +104,7 @@ struct toc_item {
 class CF_Ardu {
 public:
 	//TODO: change to bool to indicate busyness
-	CF_Ardu(uint8_t cePin, uint8_t csPin, long long radioAddr = 0xE7E7E7E7E7LL, uint8_t radioChannel = 0x50, rf24_datarate_e rfDataRate = RF24_250KBPS);
+	CF_Ardu(uint8_t cePin, uint8_t csPin, uint64_t radioAddr = 0xE7E7E7E7E7LL, uint8_t radioChannel = 0x50, rf24_datarate_e rfDataRate = RF24_250KBPS);
 	void startRadio();
 	void stopRadio();
 	void printRadioInfo();
@@ -108,7 +113,7 @@ public:
 	void setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust);
 	
 	void initLogSystem();
-	void sendAndReceive(long timeout=50);
+	void sendAndReceive(uint32_t timeout=50);
 
 	// for debugging
 	void printOutgoingPacket();
@@ -130,16 +135,16 @@ private:
 	RF24 radio; // internal radio object
 #endif
 
-	void dispatchPacket(uint8_t len); // parse packets after receiving
+	void dispatchPacket(); // parse packets after receiving
 	void requestNextTOCItem();
 	void prepareCommanderPacket();
 
 	// for radio sending
 	uint8_t _outPacketLen;
-	cl_packet outgoing;
+	uint8_t _outgoing[32];
 	uint8_t _inPacketLen;
-	cf_packet incoming;
-	unsigned long lastCommanderTime;
+	uint8_t _incoming[32];
+	uint32_t lastCommanderTime;
 
 	// we will ignore other requests while we fetch the log info
 	uint8_t _busy;
@@ -153,7 +158,7 @@ private:
 	uint8_t _cePin;
 	uint8_t _csPin;
 	uint8_t _addrShort;
-	long long _addrLong;
+	uint64_t _addrLong;
 	uint8_t _channel;
 	rf24_datarate_e _dataRate;
 

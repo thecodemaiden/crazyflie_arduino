@@ -16,7 +16,9 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRA
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ***/
 
-CF_Ardu::CF_Ardu(uint8_t cePin, uint8_t csPin, long long radioAddr, uint8_t radioChannel, rf24_datarate_e rfDataRate)
+#include <cstdio>
+
+CF_Ardu::CF_Ardu(uint8_t cePin, uint8_t csPin, uint64_t radioAddr, uint8_t radioChannel, rf24_datarate_e rfDataRate)
 	:_cePin(cePin), _csPin(csPin), _addrLong(radioAddr), _channel(radioChannel), _dataRate(rfDataRate)
 #ifndef USE_EXT_RADIO
 	, radio(cePin, csPin)
@@ -25,7 +27,7 @@ CF_Ardu::CF_Ardu(uint8_t cePin, uint8_t csPin, long long radioAddr, uint8_t radi
 	_busy = 0;
 	_keepAlive = false;
 	_logReady = false;
-	_logInfo.num = -1;
+	_logInfo.num = 0;
 	_addrShort = 0x00; // what's this??
 
 }
@@ -33,6 +35,7 @@ void CF_Ardu::startRadio()
 {
 #ifdef USE_EXT_RADIO
 	RF24 radio = *extRadio;
+	printf("Using external radio\n");
 #endif
 	// Init nRRF24L01
 	radio.begin();
@@ -48,7 +51,6 @@ void CF_Ardu::startRadio()
 	radio.openWritingPipe(_addrLong);
 	radio.openReadingPipe(1, _addrLong);
 
-	delay(100);
 	//runTime = millis();
 
 	// Start listening
@@ -60,9 +62,7 @@ void CF_Ardu::printRadioInfo()
 #ifdef USE_EXT_RADIO
 	RF24 radio = *extRadio;
 #endif
-	Serial.print("Channel: 0x");
-	int chan = radio.getChannel();
-	Serial.println(chan, HEX);
+	radio.printDetails();
 }
 
 void CF_Ardu::stopRadio()
@@ -91,21 +91,19 @@ void CF_Ardu::prepareCommanderPacket()
 {
 	if (_busy) return; // TODO: rly?
 	_busy |= BUSY_COMMANDER;
-	memset(&outgoing, 0, 32);
-	outgoing.header = (PORT_COMMANDER & 0xF) << 4 | 0x3 << 2;
-	outgoing.setpoint.roll = _setRoll;
-	outgoing.setpoint.pitch = _setPitch;
-	outgoing.setpoint.yaw = _setYaw;
-	outgoing.setpoint.thrust = _setThrust;
+    cl_commander c = {0};
+	memset(_outgoing, 0, 32);
+
+	_outgoing[0]= (PORT_COMMANDER & 0xF) << 4 | 0x3 << 2;
+
+	c.roll = _setRoll;
+	c.pitch = _setPitch;
+	c.yaw = _setYaw;
+	c.thrust = _setThrust;
 	_outPacketLen = 15;
+    c.pack(_outgoing+1);
 	send_state = COMMANDER;
-	int i;
-	Serial.print(outgoing.header, HEX);
-	for (i = 0; i < 14; i++){
-		Serial.print(" ");
-		Serial.print(outgoing.payload[i], HEX);
-	}
-	Serial.println();
+
 }
 
 
@@ -114,10 +112,13 @@ void CF_Ardu::initLogSystem()
 	if (_busy) return;
 	_busy |= BUSY_LOG_TOC;
 	// prepare the toc info packet
-	memset(&outgoing, 0, 32);
-	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2 | (CHANNEL_TOC & 0x3);
-	outgoing.toc.command = CMD_GET_INFO;
+    cl_toc_pkt p = {0};
+	memset(_outgoing, 0, 32);
+	_outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 0x1 << 2 | (CHANNEL_TOC & 0x3);
+
+	p.command = CMD_GET_INFO;
 	_outPacketLen = 2;
+    p.pack(_outgoing+1);
 	send_state = LOG_TOC;
 }
 
@@ -131,7 +132,7 @@ bool CF_Ardu::isBusy()
 	return (bool)_busy;
 }
 
-void CF_Ardu::sendAndReceive(long timeout)
+void CF_Ardu::sendAndReceive(uint32_t timeout)
 {
 #ifdef USE_EXT_RADIO
 	RF24 radio = *extRadio;
@@ -151,12 +152,10 @@ void CF_Ardu::sendAndReceive(long timeout)
 	radio.stopListening();
 
 	// payload should already be set up
-	byte raw_packet[32] = { 0 };
-	uint8_t packetLen = _outPacketLen;
-	memcpy(raw_packet, &outgoing, 32);
-
+	
 	// send the packet. Blocks until sent
-	radio.write(raw_packet, packetLen);
+    //printOutgoingPacket();
+	radio.write(_outgoing, _outPacketLen);
 
 	// unset commander flag if set - will be reset next loop if keepalive is on
 	if ((_busy & BUSY_COMMANDER)) {
@@ -166,7 +165,7 @@ void CF_Ardu::sendAndReceive(long timeout)
 	// start listening for an ACK
 	radio.startListening();
 	// Wait here until we get all responses, or timeout
-	boolean didTimeout = false;
+	bool didTimeout = false;
 	unsigned long start = millis();
 	while (!radio.available() && !didTimeout)
 	{
@@ -180,48 +179,54 @@ void CF_Ardu::sendAndReceive(long timeout)
 	}
 	else
 	{
-		// clear incoming packet
-		memset(&incoming, 0, 32);
+		// clear _incoming packet
+		memset(_incoming, 0, 32);
 
 		// read response
-		uint8_t len = radio.getDynamicPayloadSize();
-		radio.read(raw_packet, len);
+		_inPacketLen = radio.getDynamicPayloadSize();
+		radio.read(_incoming, _inPacketLen);
 
-		memcpy(&incoming, raw_packet, len);
-
-		dispatchPacket(len);
-
+		dispatchPacket();
 	}
 
 }
 
-void CF_Ardu::dispatchPacket(uint8_t len)
+void CF_Ardu::dispatchPacket()
 {
-	byte port = (incoming.header >> 4);
-	byte channel = (incoming.header & 0x3);
-	//printIncomingPacket();
+	uint8_t port = (_incoming[0] >> 4);
+	uint8_t channel = (_incoming[0] & 0x3);
+    //debugln("Port: %x Channel: %x\n", port, channel);
 	if (port == PORT_LOGGING && channel == CHANNEL_TOC) {
 		// first assume it's a crc packet
-		byte command = incoming.crc_info.command;
+		uint8_t command = _incoming[1];
 		switch (command) {
 		case CMD_GET_INFO:
 		{
 			// it is CRC
-			memcpy(&_logInfo, &incoming.crc_info, 8);
-			send_state = LOG_TOC;
-			_itemToFetch = 0;
-			requestNextTOCItem();
-			Serial.print("TOC size: "); Serial.println(_logInfo.num);
+            cf_toc_crc_pkt p;
+            
+            p.unpack(_incoming+1);
+
+            if (p.crc != _logInfo.crc || p.num != _logInfo.num) {
+                _logInfo.unpack(_incoming+1);
+                send_state = LOG_TOC;
+                _itemToFetch = 0;
+                requestNextTOCItem();
+                printf("TOC size: %d\n", _logInfo.num); 
+            }   
 
 			break;
 		}
 		case CMD_GET_ITEM:
 			// actually it was a toc item request
 		{
-			if (_logInfo.num < 0)
+			if (_logInfo.num == 0)
 				break;
 
-			byte fetchedItem = incoming.item_info.index;
+            cf_toc_item_pkt p;
+            p.unpack(_incoming+1);
+
+			uint8_t fetchedItem = p.index;
 			send_state = LOG_TOC;
 			if (fetchedItem < _itemToFetch) {
 				send_state = DUMMY;
@@ -239,12 +244,11 @@ void CF_Ardu::dispatchPacket(uint8_t len)
 				debugln("LOG COMPLETE");
 			}
 			else {
-				//Serial.print("*");
 				requestNextTOCItem();
 				send_state = LOG_TOC;
 			}
 			uint8_t groupEnd = 0;
-			while (incoming.item_info.varName[groupEnd] != '\0') groupEnd++;
+			while (p.varName[groupEnd] != '\0') groupEnd++;
 
 			// let's print what was in here
 			debug("Got variable ");
@@ -253,8 +257,8 @@ void CF_Ardu::dispatchPacket(uint8_t len)
 			char groupName[32] = { 0 };
 			char varName[32] = { 0 };
 
-			memcpy(groupName, incoming.item_info.varName, groupEnd);
-			memcpy(varName, incoming.item_info.varName + groupEnd + 1, 28 - groupEnd - 1);
+			memcpy(groupName, p.varName, groupEnd);
+			memcpy(varName, p.varName + groupEnd + 1, 28 - groupEnd - 1);
 			debug(groupName);
 			debug(".");
 			debugln(varName);
@@ -266,7 +270,6 @@ void CF_Ardu::dispatchPacket(uint8_t len)
 			break;
 		}
 	}
-	_inPacketLen = len;
 }
 
 void CF_Ardu::requestNextTOCItem()
@@ -275,10 +278,12 @@ void CF_Ardu::requestNextTOCItem()
 	debug("Preparing TOC item request: ");
 	debugln(_itemToFetch);
 
-	memset(&outgoing, 0, 32);
-	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
-	outgoing.toc.command = CMD_GET_ITEM;
-	outgoing.toc.index = _itemToFetch;
+	memset(_outgoing, 0, 32);
+	_outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
+    cl_toc_pkt p = {0};
+	p.command = CMD_GET_ITEM;
+	p.index = _itemToFetch;
+    p.pack(_outgoing+1);
 	_outPacketLen = 3;
 }
 
@@ -296,30 +301,19 @@ void CF_Ardu::stopCommander()
 
 void CF_Ardu::printOutgoingPacket()
 {
-	debug("Outgoing length: ");
-	debugln(_outPacketLen);
-	debug("HEADER: 0x");
-	debugln_hex(outgoing.header);
-	debug("Payload: ");
-	for (int i = 0; i < _outPacketLen - 1; i++) {
-		debug("0x");
-		debug_hex(outgoing.payload[i]);
-		debug(" ");
-	}
-	debugln();
+    printf("Outgoing length: %d\n", _outPacketLen);    
+    for (int i = 0; i < 32; i++) {
+        printf("%02x ", _outgoing[i]);
+    }
+    printf("\n");
 }
 
 void CF_Ardu::printIncomingPacket()
 {
-	debug("Incoming length: ");
-	debugln(_inPacketLen);
-	debug("HEADER: 0x");
-	debugln_hex(incoming.header);
-	debug("Payload: ");
-	for (int i = 0; i < _inPacketLen - 1; i++) {
-		debug("0x");
-		debug_hex(incoming.payload[i]);
-		debug(" ");
-	}
-	debugln();
+    printf("Incoming length: %d\n", _inPacketLen);    
+
+    for (int i = 0; i < 32; i++) {
+        printf("%02x ", _incoming[i]);
+    }
+    printf("\n");
 }
