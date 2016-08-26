@@ -42,6 +42,15 @@ struct cl_log_settings
 	};
 };
 
+struct cl_commander
+{
+	float roll;
+	float pitch;
+	float yaw;
+	uint16_t thrust;
+};
+
+
 // define the packets we send
 struct cl_packet
 {
@@ -50,6 +59,7 @@ struct cl_packet
 		byte payload[31];
 		cl_toc_pkt toc;
 		cl_log_settings log_settings;
+		cl_commander setpoint;
 	};
 };
 
@@ -87,6 +97,7 @@ struct cf_log_data
 	byte timestamp3; //sweet jesus...
 	byte values[28];
 };
+
 
 struct cf_packet
 {

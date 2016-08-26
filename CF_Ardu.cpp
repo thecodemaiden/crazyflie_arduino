@@ -22,7 +22,10 @@ CF_Ardu::CF_Ardu(uint8_t cePin, uint8_t csPin, long long radioAddr, uint8_t radi
 	, radio(cePin, csPin)
 #endif
 {
+	_busy = 0;
+	_keepAlive = false;
 	_logReady = false;
+	_logInfo.num = -1;
 	_addrShort = 0x00; // what's this??
 
 }
@@ -48,12 +51,18 @@ void CF_Ardu::startRadio()
 	delay(100);
 	//runTime = millis();
 
-	// Dump the configuration of the rf unit for debugging
-#ifdef CF_DEBUG
-	radio.printDetails();
-#endif
 	// Start listening
 	radio.startListening();
+}
+
+void CF_Ardu::printRadioInfo()
+{
+#ifdef USE_EXT_RADIO
+	RF24 radio = *extRadio;
+#endif
+	Serial.print("Channel: 0x");
+	int chan = radio.getChannel();
+	Serial.println(chan, HEX);
 }
 
 void CF_Ardu::stopRadio()
@@ -65,15 +74,225 @@ void CF_Ardu::stopRadio()
 	radio.stopListening();
 }
 
-void CF_Ardu::setCommanderInterval(uint8_t _msInt)
+void CF_Ardu::setCommanderInterval(uint8_t msInt)
 {
-	_commanderInterval = _msInt;
+	_commanderInterval = msInt;
 }
 
 void CF_Ardu::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust)
 {
+	_setThrust = thrust;
+	_setPitch = pitch;
+	_setRoll = roll;
+	_setYaw = yaw;
+}
+
+void CF_Ardu::prepareCommanderPacket()
+{
+	if (_busy) return; // TODO: rly?
+	_busy |= BUSY_COMMANDER;
+	memset(&outgoing, 0, 32);
+	outgoing.header = (PORT_COMMANDER & 0xF) << 4 | 0x3 << 2;
+	outgoing.setpoint.roll = _setRoll;
+	outgoing.setpoint.pitch = _setPitch;
+	outgoing.setpoint.yaw = _setYaw;
+	outgoing.setpoint.thrust = _setThrust;
+	_outPacketLen = 15;
+	send_state = COMMANDER;
+	int i;
+	Serial.print(outgoing.header, HEX);
+	for (i = 0; i < 14; i++){
+		Serial.print(" ");
+		Serial.print(outgoing.payload[i], HEX);
+	}
+	Serial.println();
+}
+
+
+void CF_Ardu::initLogSystem()
+{
+	if (_busy) return;
+	_busy |= BUSY_LOG_TOC;
+	// prepare the toc info packet
+	memset(&outgoing, 0, 32);
+	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2 | (CHANNEL_TOC & 0x3);
+	outgoing.toc.command = CMD_GET_INFO;
+	_outPacketLen = 2;
+	send_state = LOG_TOC;
+}
+
+bool CF_Ardu::hasLogInfo()
+{
+	return _logReady;
+}
+
+bool CF_Ardu::isBusy()
+{
+	return (bool)_busy;
+}
+
+void CF_Ardu::sendAndReceive(long timeout)
+{
+#ifdef USE_EXT_RADIO
+	RF24 radio = *extRadio;
+#endif
+
+	// is the commander on?
+	if (_keepAlive) {
+		prepareCommanderPacket();
+	}
+
+	// if we are not busy, no need to be here
+	if (!_busy) {
+		debugln("Nothing to do");
+		return;
+	}
+	// First, stop listening so we can talk.
+	radio.stopListening();
+
+	// payload should already be set up
+	byte raw_packet[32] = { 0 };
+	uint8_t packetLen = _outPacketLen;
+	memcpy(raw_packet, &outgoing, 32);
+
+	// send the packet. Blocks until sent
+	radio.write(raw_packet, packetLen);
+
+	// unset commander flag if set - will be reset next loop if keepalive is on
+	if ((_busy & BUSY_COMMANDER)) {
+		_busy &= ~BUSY_COMMANDER;
+	}
+
+	// start listening for an ACK
+	radio.startListening();
+	// Wait here until we get all responses, or timeout
+	boolean didTimeout = false;
+	unsigned long start = millis();
+	while (!radio.available() && !didTimeout)
+	{
+		if (millis() - start > timeout)
+			didTimeout = true;
+	}
+
+	if (didTimeout)
+	{
+		debugln("response timed out");
+	}
+	else
+	{
+		// clear incoming packet
+		memset(&incoming, 0, 32);
+
+		// read response
+		uint8_t len = radio.getDynamicPayloadSize();
+		radio.read(raw_packet, len);
+
+		memcpy(&incoming, raw_packet, len);
+
+		dispatchPacket(len);
+
+	}
 
 }
+
+void CF_Ardu::dispatchPacket(uint8_t len)
+{
+	byte port = (incoming.header >> 4);
+	byte channel = (incoming.header & 0x3);
+	//printIncomingPacket();
+	if (port == PORT_LOGGING && channel == CHANNEL_TOC) {
+		// first assume it's a crc packet
+		byte command = incoming.crc_info.command;
+		switch (command) {
+		case CMD_GET_INFO:
+		{
+			// it is CRC
+			memcpy(&_logInfo, &incoming.crc_info, 8);
+			send_state = LOG_TOC;
+			_itemToFetch = 0;
+			requestNextTOCItem();
+			Serial.print("TOC size: "); Serial.println(_logInfo.num);
+
+			break;
+		}
+		case CMD_GET_ITEM:
+			// actually it was a toc item request
+		{
+			if (_logInfo.num < 0)
+				break;
+
+			byte fetchedItem = incoming.item_info.index;
+			send_state = LOG_TOC;
+			if (fetchedItem < _itemToFetch) {
+				send_state = DUMMY;
+			}
+			else
+				if (fetchedItem == _itemToFetch) {
+					_itemToFetch += 1;
+					send_state = LOG_TOC;
+				}
+			if (_itemToFetch >= _logInfo.num) {
+				_busy &= ~BUSY_LOG_TOC;
+				_logReady = true;
+				send_state = DUMMY;
+
+				debugln("LOG COMPLETE");
+			}
+			else {
+				//Serial.print("*");
+				requestNextTOCItem();
+				send_state = LOG_TOC;
+			}
+			uint8_t groupEnd = 0;
+			while (incoming.item_info.varName[groupEnd] != '\0') groupEnd++;
+
+			// let's print what was in here
+			debug("Got variable ");
+			debug(fetchedItem);
+			debug(": ");
+			char groupName[32] = { 0 };
+			char varName[32] = { 0 };
+
+			memcpy(groupName, incoming.item_info.varName, groupEnd);
+			memcpy(varName, incoming.item_info.varName + groupEnd + 1, 28 - groupEnd - 1);
+			debug(groupName);
+			debug(".");
+			debugln(varName);
+
+			break;
+		}
+		default:
+			debugln("Unknown packet");
+			break;
+		}
+	}
+	_inPacketLen = len;
+}
+
+void CF_Ardu::requestNextTOCItem()
+{
+	// prepare the packet
+	debug("Preparing TOC item request: ");
+	debugln(_itemToFetch);
+
+	memset(&outgoing, 0, 32);
+	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
+	outgoing.toc.command = CMD_GET_ITEM;
+	outgoing.toc.index = _itemToFetch;
+	_outPacketLen = 3;
+}
+
+
+void CF_Ardu::startCommander()
+{
+	_keepAlive = true;
+}
+
+void CF_Ardu::stopCommander()
+{
+	_keepAlive = false;
+}
+
 
 void CF_Ardu::printOutgoingPacket()
 {
@@ -82,9 +301,9 @@ void CF_Ardu::printOutgoingPacket()
 	debug("HEADER: 0x");
 	debugln_hex(outgoing.header);
 	debug("Payload: ");
-	for (int i = 0; i <_outPacketLen-1; i++) {
+	for (int i = 0; i < _outPacketLen - 1; i++) {
 		debug("0x");
-		debug_hex(outgoing.payload[i] );
+		debug_hex(outgoing.payload[i]);
 		debug(" ");
 	}
 	debugln();
@@ -103,146 +322,4 @@ void CF_Ardu::printIncomingPacket()
 		debug(" ");
 	}
 	debugln();
-}
-
-void CF_Ardu::initLogSystem()
-{
-	if (_logBusy) return;
-	_logBusy = true;
-	// prepare the toc info packet
-	memset(&outgoing, 0, 32);
-	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
-	outgoing.toc.command = CMD_GET_INFO;
-	_outPacketLen = 2;
-	send_state = BUFFER;
-}
-
-void CF_Ardu::sendAndReceive(long timeout)
-{
-#ifdef USE_EXT_RADIO
-	RF24 radio = *extRadio;
-#endif
-	// First, stop listening so we can talk.
-	radio.stopListening();
-	//printOutgoingPacket();
-	// payload should already be set up
-	byte raw_packet[32] = { 0 };
-	uint8_t packetLen = _outPacketLen;
-	if (send_state == BUFFER) {
-		memcpy(raw_packet, &outgoing, 32);
-	} else {
-		raw_packet[0] = 0xff;
-		packetLen = 1;
-	}
-	// send the packet. Blocks until sent
-	radio.write(raw_packet, packetLen);
-		// start listening for an ACK
-	radio.startListening();
-	// Wait here until we get all responses, or timeout
-	boolean didTimeout = false;
-		unsigned long start = millis();
-		while (!radio.available() && !didTimeout)
-		{
-			if (millis() - start > timeout)
-				didTimeout = true;
-		}
-
-		if (didTimeout)
-		{
-			if (send_state != DUMMY) debugln("response timed out");
-			if (_logBusy) {
-				send_state = BUFFER;
-			}
-		}
-		else
-		{
-			// clear incoming packet
-			memset(&incoming, 0, 32);
-
-			// read response
-			uint8_t len = radio.getDynamicPayloadSize();
-			radio.read(raw_packet, len);
-
-			memcpy(&incoming, raw_packet, len);
-
-			dispatchPacket(len);
-		}
-
-}
-
-void CF_Ardu::dispatchPacket(uint8_t len)
-{
-	byte port = (incoming.header >> 4);
-	byte channel = (incoming.header & 0x3);
-	//printIncomingPacket();
-	if (port == PORT_LOGGING && channel == CHANNEL_TOC) {
-		// first assume it's a crc packet
-		byte command = incoming.crc_info.command;
-		switch (command) {
-		case CMD_GET_INFO:
-		{
-			send_state = BUFFER;
-			memcpy(&_logInfo, &incoming.crc_info, 8);
-			_itemToFetch = 0;
-			requestNextTOCItem();
-			debug("Num variables: ");
-			debugln(_logInfo.num);
-			break;
-		}
-		case CMD_GET_ITEM:
-		{
-			byte fetchedItem = incoming.item_info.index;
-			send_state = BUFFER;
-			if (fetchedItem < _itemToFetch) {
-				send_state = DUMMY;
-			} else
-				if (fetchedItem == _itemToFetch) {
-					_itemToFetch += 1;
-					send_state = BUFFER;
-				}
-			if (_itemToFetch >= _logInfo.num) {
-				_logBusy = false;
-				_logReady = true;
-				send_state = DUMMY;
-			}
-			else {
-				requestNextTOCItem();
-				send_state = BUFFER;
-			}
-			uint8_t groupEnd = 0;
-			while (incoming.item_info.varName[groupEnd] != '\0') groupEnd++;
-	
-			// let's print what was in here
-			debug("Got variable ");
-			debug(fetchedItem);
-			debug(": ");
-			char groupName[32] = { 0 };
-			char varName[32] = { 0 };
-			
-			memcpy(groupName, incoming.item_info.varName, groupEnd);
-			memcpy(varName, incoming.item_info.varName+groupEnd+1, 28 - groupEnd-1);
-			debug(groupName);
-			debug(".");
-			debugln(varName);
-
-			break;
-		}
-		default:
-			debugln("Unknown packet");
-			break;
-		}
-	}
-	_inPacketLen = len;
-}
-
-void CF_Ardu::requestNextTOCItem()
-{
-	// prepare the packet
-	/*debug("Preparing TOC item request: ");
-	debugln(_itemToFetch);*/
-	memset(&outgoing, 0, 32);
-	outgoing.header = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
-	outgoing.toc.command = CMD_GET_ITEM;
-	outgoing.toc.index = _itemToFetch;
-	_outPacketLen = 3;
 }

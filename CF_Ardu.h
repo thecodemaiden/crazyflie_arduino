@@ -23,6 +23,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "nRF24L01.h"
 #include "RF24.h"
 
+//#define CF_DEBUG 
 
 #ifdef CF_DEBUG
 #define debug(x) Serial.print(x)
@@ -67,10 +68,33 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define CHANNEL_SETTINGS 1
 #define CHANNEL_DATA 2
 
+#define USE_EXT_RADIO
+
 typedef enum {
 	DUMMY = 0,
-	BUFFER,
+	LOG_TOC,
+	LOG_DATA,
+	COMMANDER
 } cf_send_state;
+
+// assume all CFs have the same log params...
+struct toc_item {
+	byte type;
+	char name[28];
+	long value; // 400 extra bytes won't kill me
+};
+//toc_item _TOC[100];
+
+/*struct log_block {
+	byte id;
+	byte vars[]
+};*/
+
+// Busy reasons
+#define BUSY_LOG_TOC (1<<0)
+#define BUSY_LOG_DATA (1<<1)
+#define BUSY_COMMANDER (1<<2)
+
 
 class CF_Ardu {
 public:
@@ -78,12 +102,24 @@ public:
 	CF_Ardu(uint8_t cePin, uint8_t csPin, long long radioAddr = 0xE7E7E7E7E7LL, uint8_t radioChannel = 0x50, rf24_datarate_e rfDataRate = RF24_250KBPS);
 	void startRadio();
 	void stopRadio();
-	void setCommanderInterval(uint8_t _msInt);
+	void printRadioInfo();
+
+	void setCommanderInterval(uint8_t msInt); // clamps to <= 500ms
 	void setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust);
+	
 	void initLogSystem();
 	void sendAndReceive(long timeout=50);
+
+	// for debugging
 	void printOutgoingPacket();
 	void printIncomingPacket();
+
+	void startCommander(); // sends commander packets at intervals to keep connection alive
+	void stopCommander(); // stop sending commander packets
+
+	bool isBusy();
+	bool hasLogInfo();
+
 #ifdef USE_EXT_RADIO
 	RF24 *extRadio;
 #endif
@@ -96,15 +132,17 @@ private:
 
 	void dispatchPacket(uint8_t len); // parse packets after receiving
 	void requestNextTOCItem();
+	void prepareCommanderPacket();
 
 	// for radio sending
 	uint8_t _outPacketLen;
 	cl_packet outgoing;
 	uint8_t _inPacketLen;
 	cf_packet incoming;
+	unsigned long lastCommanderTime;
 
 	// we will ignore other requests while we fetch the log info
-	bool _logBusy;
+	uint8_t _busy;
 
 	// have we gotten the TOC and the full list?
 	bool _logReady; 
@@ -121,10 +159,11 @@ private:
 
 	// for keeping communication alive
 	uint8_t _commanderInterval;
-	uint8_t _setThrust;
+	uint16_t _setThrust;
 	uint8_t _setPitch;
 	uint8_t _setRoll;
 	uint8_t _setYaw;
+	bool _keepAlive;
 
 };
 #endif
