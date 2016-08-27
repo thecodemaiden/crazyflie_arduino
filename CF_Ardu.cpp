@@ -155,8 +155,12 @@ void CF_Ardu::sendAndReceive(uint32_t timeout)
 	
 	// send the packet. Blocks until sent
     //printOutgoingPacket();
-	radio.write(_outgoing, _outPacketLen);
-
+    if (send_state == DUMMY) {
+        uint8_t dummyVal = 0xff;
+        radio.write(&dummyVal, 1);
+    } else {
+	    radio.write(_outgoing, _outPacketLen);
+    }
 	// unset commander flag if set - will be reset next loop if keepalive is on
 	if ((_busy & BUSY_COMMANDER)) {
 		_busy &= ~BUSY_COMMANDER;
@@ -233,6 +237,9 @@ void CF_Ardu::dispatchPacket()
 			}
 			else
 				if (fetchedItem == _itemToFetch) {
+                    uint8_t groupEnd = 0;
+                    while (p.varName[groupEnd] != '\0') groupEnd++;
+                    printf("Got variable %s.%s\n", p.varName, &p.varName[groupEnd+1]);
 					_itemToFetch += 1;
 					send_state = LOG_TOC;
 				}
