@@ -30,13 +30,18 @@ LDCONFIG=ldconfig
 
 LIBS=-l$(LIB)
 
-PROGRAMS = controller
+PROGRAMS := controller
+SOURCES := main.cpp cflie.cpp
+HEADERS := cflie.h cflie_packets.h
 
 all: $(PROGRAMS)
 
-HEADERS := CF_Ardu.h
-$(PROGRAMS): main.cpp CF_Ardu.cpp $(HEADERS)
+built_source: $(SOURCES)
 	$(CXX) $(CFLAGS) -I$(HEADER_DIR) -L$(LIB_DIR) $^  $(LIBS) -o $@
+
+
+$(PROGRAMS): $(HEADERS) built_source
+	mv built_source $@
 
 clean:
 	@echo "[Cleaning]"

@@ -1,4 +1,5 @@
-#include "CF_Ardu.h"
+#include "cflie.h"
+#include "cflie_log.h"
 /***
 The MIT License (MIT)
 Copyright (c) <2016> <Adeola Bannis>
@@ -18,68 +19,25 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <cstdio>
 
-CF_Ardu::CF_Ardu(uint8_t cePin, uint8_t csPin, uint64_t radioAddr, uint8_t radioChannel, rf24_datarate_e rfDataRate)
-	:_cePin(cePin), _csPin(csPin), _addrLong(radioAddr), _channel(radioChannel), _dataRate(rfDataRate)
-#ifndef USE_EXT_RADIO
-	, radio(cePin, csPin)
-#endif
+Crazyflie::Crazyflie(RF24 *extRadio, uint64_t radioAddr, uint8_t pipeNum)
+	: radio(extRadio),_busy(0),  _logReady(false), _logInfo(), 
+     _addrLong(radioAddr), _pipeNum(pipeNum),  _keepAlive(false)
 {
-	_busy = 0;
-	_keepAlive = false;
-	_logReady = false;
-	_logInfo.num = 0;
-	_addrShort = 0x00; // what's this??
 
-}
-void CF_Ardu::startRadio()
-{
-#ifdef USE_EXT_RADIO
-	RF24 radio = *extRadio;
-	printf("Using external radio\n");
-#endif
-	// Init nRRF24L01
-	radio.begin();
-
-	// enable dynamic payloads, channel, data rate 250K
-	radio.enableAckPayload();
-	radio.enableDynamicPayloads();
-	radio.setPALevel(RF24_PA_LOW);
-	radio.setChannel(_channel);
-	radio.setDataRate(_dataRate);
-	radio.setRetries(15, 3);
-	radio.setCRCLength(RF24_CRC_16);
-	radio.openWritingPipe(_addrLong);
-	radio.openReadingPipe(1, _addrLong);
-
-	//runTime = millis();
-
-	// Start listening
-	radio.startListening();
+    _logStorage = new LogStorage();
 }
 
-void CF_Ardu::printRadioInfo()
+Crazyflie::~Crazyflie()
 {
-#ifdef USE_EXT_RADIO
-	RF24 radio = *extRadio;
-#endif
-	radio.printDetails();
+    delete _logStorage;
 }
 
-void CF_Ardu::stopRadio()
-{
-#ifdef USE_EXT_RADIO
-	RF24 radio = *extRadio;
-#endif
-	// nothing here yet
-	radio.stopListening();
-}
-
-void CF_Ardu::setCommanderInterval(uint8_t msInt)
+void Crazyflie::setCommanderInterval(uint8_t msInt)
 {
 	_commanderInterval = msInt;
 }
 
-void CF_Ardu::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust)
+void Crazyflie::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust)
 {
 	_setThrust = thrust;
 	_setPitch = pitch;
@@ -87,7 +45,7 @@ void CF_Ardu::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t 
 	_setYaw = yaw;
 }
 
-void CF_Ardu::prepareCommanderPacket()
+void Crazyflie::prepareCommanderPacket()
 {
 	if (_busy) return; // TODO: rly?
 	_busy |= BUSY_COMMANDER;
@@ -107,7 +65,7 @@ void CF_Ardu::prepareCommanderPacket()
 }
 
 
-void CF_Ardu::initLogSystem()
+void Crazyflie::initLogSystem()
 {
 	if (_busy) return;
 	_busy |= BUSY_LOG_TOC;
@@ -122,21 +80,23 @@ void CF_Ardu::initLogSystem()
 	send_state = LOG_TOC;
 }
 
-bool CF_Ardu::hasLogInfo()
+void Crazyflie::requestRSSILog()
+{
+}
+
+
+bool Crazyflie::hasLogInfo()
 {
 	return _logReady;
 }
 
-bool CF_Ardu::isBusy()
+bool Crazyflie::isBusy()
 {
 	return (bool)_busy;
 }
 
-void CF_Ardu::sendAndReceive(uint32_t timeout)
+void Crazyflie::sendAndReceive(uint32_t timeout)
 {
-#ifdef USE_EXT_RADIO
-	RF24 radio = *extRadio;
-#endif
 
 	// is the commander on?
 	if (_keepAlive) {
@@ -145,21 +105,22 @@ void CF_Ardu::sendAndReceive(uint32_t timeout)
 
 	// if we are not busy, no need to be here
 	if (!_busy) {
-		debugln("Nothing to do");
+		debug("Nothing to do");
 		return;
 	}
 	// First, stop listening so we can talk.
-	radio.stopListening();
+	radio->stopListening();
 
+    radio->openWritingPipe(_addrLong);
 	// payload should already be set up
 	
 	// send the packet. Blocks until sent
     //printOutgoingPacket();
     if (send_state == DUMMY) {
         uint8_t dummyVal = 0xff;
-        radio.write(&dummyVal, 1);
+        radio->write(&dummyVal, 1);
     } else {
-	    radio.write(_outgoing, _outPacketLen);
+	    radio->write(_outgoing, _outPacketLen);
     }
 	// unset commander flag if set - will be reset next loop if keepalive is on
 	if ((_busy & BUSY_COMMANDER)) {
@@ -167,11 +128,12 @@ void CF_Ardu::sendAndReceive(uint32_t timeout)
 	}
 
 	// start listening for an ACK
-	radio.startListening();
+    //radio->openReadingPipe(_pipeNum, _addrLong);
+	radio->startListening();
 	// Wait here until we get all responses, or timeout
 	bool didTimeout = false;
 	unsigned long start = millis();
-	while (!radio.available() && !didTimeout)
+	while (!radio->available() && !didTimeout)
 	{
 		if (millis() - start > timeout)
 			didTimeout = true;
@@ -179,7 +141,7 @@ void CF_Ardu::sendAndReceive(uint32_t timeout)
 
 	if (didTimeout)
 	{
-		debugln("response timed out");
+		debug("response timed out");
 	}
 	else
 	{
@@ -187,19 +149,18 @@ void CF_Ardu::sendAndReceive(uint32_t timeout)
 		memset(_incoming, 0, 32);
 
 		// read response
-		_inPacketLen = radio.getDynamicPayloadSize();
-		radio.read(_incoming, _inPacketLen);
+		_inPacketLen = radio->getDynamicPayloadSize();
+		radio->read(_incoming, _inPacketLen);
 
 		dispatchPacket();
 	}
 
 }
 
-void CF_Ardu::dispatchPacket()
+void Crazyflie::dispatchPacket()
 {
 	uint8_t port = (_incoming[0] >> 4);
 	uint8_t channel = (_incoming[0] & 0x3);
-    //debugln("Port: %x Channel: %x\n", port, channel);
 	if (port == PORT_LOGGING && channel == CHANNEL_TOC) {
 		// first assume it's a crc packet
 		uint8_t command = _incoming[1];
@@ -239,7 +200,9 @@ void CF_Ardu::dispatchPacket()
 				if (fetchedItem == _itemToFetch) {
                     uint8_t groupEnd = 0;
                     while (p.varName[groupEnd] != '\0') groupEnd++;
-                    printf("Got variable %s.%s\n", p.varName, &p.varName[groupEnd+1]);
+                    p.varName[groupEnd] = '.';
+                    debug("Got variable %s, type %x \n", p.varName, p.varType);
+                    _logStorage->setVariable(fetchedItem, (LogVarType)p.varType, p.varName);
 					_itemToFetch += 1;
 					send_state = LOG_TOC;
 				}
@@ -247,8 +210,6 @@ void CF_Ardu::dispatchPacket()
 				_busy &= ~BUSY_LOG_TOC;
 				_logReady = true;
 				send_state = DUMMY;
-
-				debugln("LOG COMPLETE");
 			}
 			else {
 				requestNextTOCItem();
@@ -257,33 +218,18 @@ void CF_Ardu::dispatchPacket()
 			uint8_t groupEnd = 0;
 			while (p.varName[groupEnd] != '\0') groupEnd++;
 
-			// let's print what was in here
-			debug("Got variable ");
-			debug(fetchedItem);
-			debug(": ");
-			char groupName[32] = { 0 };
-			char varName[32] = { 0 };
-
-			memcpy(groupName, p.varName, groupEnd);
-			memcpy(varName, p.varName + groupEnd + 1, 28 - groupEnd - 1);
-			debug(groupName);
-			debug(".");
-			debugln(varName);
-
 			break;
 		}
 		default:
-			debugln("Unknown packet");
 			break;
 		}
 	}
 }
 
-void CF_Ardu::requestNextTOCItem()
+void Crazyflie::requestNextTOCItem()
 {
 	// prepare the packet
-	debug("Preparing TOC item request: ");
-	debugln(_itemToFetch);
+	debug("Preparing TOC item request: %d", _itemToFetch);
 
 	memset(_outgoing, 0, 32);
 	_outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
@@ -294,19 +240,28 @@ void CF_Ardu::requestNextTOCItem()
 	_outPacketLen = 3;
 }
 
+const LogVariable *Crazyflie::getLogVariable(unsigned int varID)
+{
+    return _logStorage->getVariable(varID);
+}
 
-void CF_Ardu::startCommander()
+unsigned int Crazyflie::getLogTocSize()
+{
+    return _logStorage->getSize();
+}
+
+void Crazyflie::startCommander()
 {
 	_keepAlive = true;
 }
 
-void CF_Ardu::stopCommander()
+void Crazyflie::stopCommander()
 {
 	_keepAlive = false;
 }
 
 
-void CF_Ardu::printOutgoingPacket()
+void Crazyflie::printOutgoingPacket()
 {
     printf("Outgoing length: %d\n", _outPacketLen);    
     for (int i = 0; i < 32; i++) {
@@ -315,7 +270,7 @@ void CF_Ardu::printOutgoingPacket()
     printf("\n");
 }
 
-void CF_Ardu::printIncomingPacket()
+void Crazyflie::printIncomingPacket()
 {
     printf("Incoming length: %d\n", _inPacketLen);    
 

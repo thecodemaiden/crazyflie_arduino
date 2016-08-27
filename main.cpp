@@ -3,13 +3,10 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
-#include "CF_Ardu.h"
+#include "cflie.h"
+#include "cflie_log.h"
 
 using namespace std;
-#ifdef USE_EXT_RADIO
-RF24 radio(26,10);
-#endif
-CF_Ardu cf(26,10);
 
 struct Setpoint
 {
@@ -21,12 +18,34 @@ struct Setpoint
     Setpoint():afterTime(0), pitch(0), roll(0), yaw(0), thrust(0) {}
 };
 
+
+void initRadio(RF24 &radio)
+{
+	radio.begin();
+
+	// enable dynamic payloads, channel, data rate 250K
+	radio.enableAckPayload();
+	radio.enableDynamicPayloads();
+	radio.setPALevel(RF24_PA_LOW);
+	radio.setChannel(0x50);
+	radio.setDataRate(RF24_250KBPS);
+	radio.setRetries(15, 3);
+	radio.setCRCLength(RF24_CRC_16);
+	radio.openWritingPipe(0xE7E7E7E7E7L);
+	radio.openReadingPipe(1, 0xE7E7E7E7E7L);
+
+	//runTime = millis();
+
+	// Start listening
+	radio.startListening();
+}
+
 #define itinLen 5
 
 Setpoint itinerary[itinLen];
 unsigned long startTime;
 
-void runItinerary(CF_Ardu *copter)
+void runItinerary(Crazyflie *copter)
 {
     unsigned i=0;
     Setpoint *next = &itinerary[i];
@@ -64,45 +83,48 @@ void setupItinerary()
     itinerary[4].afterTime = 11000;
     itinerary[4].thrust = 37500;
 
-    /*
-
-    itinerary[2].afterTime = 9000;
-    itinerary[2].pitch = 0;
-    itinerary[2].roll = 0;
-    itinerary[2].yaw = 0;
-    itinerary[2].thrust = 35000;
-    */
 }
 
-int main(int argc, char** argv){
-#ifdef USE_EXT_RADIO
-    cf.extRadio = &radio;
-    //radio.begin();
-#endif
-    cf.startRadio();
-    cf.printRadioInfo();
 
-#ifdef USE_EXT_RADIO
+#define RSSI_IDX 51
+int main(int argc, char** argv){
+    RF24 radio(26,10);
+    initRadio(radio);
+
     radio.printDetails();
-#endif
+    Crazyflie cf(&radio);
 
     setupItinerary();
     cf.initLogSystem();
     bool readyToFly = false;
     while (!readyToFly) {
         readyToFly = cf.hasLogInfo();
-        cf.sendAndReceive(100);
+        cf.sendAndReceive(200);
     }
+    printf("Log TOC downloaded.\n");
+
+#define PRINT_TOC
+#ifdef PRINT_TOC
+    unsigned int logSize = cf.getLogTocSize();
+    for (unsigned int i =0; i!=logSize; i++) {
+        const LogVariable *v = cf.getLogVariable(i);
+        printf("%d:\t%s\n", i, v->name);
+    }
+#endif
+
+#define NOFLY 1
+
+#if !NOFLY
     cf.startCommander();
 
     startTime = millis();
-    printf("Log TOC downloaded.\n");
 
     runItinerary(&cf);
 
     printf("Itinerary complete.\n");
 
     cf.setCommanderSetpoint(0,0,0,35000);
+#endif
     while (1) {
         cf.sendAndReceive(100);
     }

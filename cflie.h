@@ -23,28 +23,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //#define CF_DEBUG 
 
 #ifdef CF_DEBUG
-    #if defined(ARDUINO)
-    #define debug(x) Serial.print(x)
-    #define debug_hex(x) Serial.print(x, HEX)
-    #define debugln(x) Serial.println(x)
-    #define debugln_hex(x) Serial.println(x, HEX)
-    #else
-    #define debug(x) printf("%s")
-    #define debug_hex(x) printf("%x", x)
-    #define debugln(x) printf(
-    #define debugln_hex(x) Serial.println(x, HEX)
-    
-    
-    #endif
+    #define debug(...) printf(__VA_ARGS__)
 #else
-#define debug(x)  /* pass */
-#define debugln(x) /* pass*/
-#define debug_hex(x)  /* pass */
-#define debugln_hex(x) /* pass */
+#define debug(...)  /* pass */
 #endif
 
-#include "CF_Ardu_Packets.h"
-
+#include "cflie_packets.h"
+class LogStorage;
+struct LogVariable;
 
 // TODO: convert to enums
 // --- commands ---
@@ -101,18 +87,15 @@ struct toc_item {
 #define BUSY_COMMANDER (1<<2)
 
 
-class CF_Ardu {
+class Crazyflie {
 public:
-	//TODO: change to bool to indicate busyness
-	CF_Ardu(uint8_t cePin, uint8_t csPin, uint64_t radioAddr = 0xE7E7E7E7E7LL, uint8_t radioChannel = 0x50, rf24_datarate_e rfDataRate = RF24_250KBPS);
-	void startRadio();
-	void stopRadio();
-	void printRadioInfo();
+	Crazyflie(RF24 *radio, uint64_t radioAddr=0xE7E7E7E7E7L, uint8_t pipeNum=1);
 
 	void setCommanderInterval(uint8_t msInt); // clamps to <= 500ms
 	void setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust);
 	
 	void initLogSystem();
+    void requestRSSILog();
 	void sendAndReceive(uint32_t timeout=50);
 
 	// for debugging
@@ -125,15 +108,15 @@ public:
 	bool isBusy();
 	bool hasLogInfo();
 
-#ifdef USE_EXT_RADIO
-	RF24 *extRadio;
-#endif
+    unsigned int getLogTocSize();
+    const LogVariable *getLogVariable(unsigned int varID);
+
+    ~Crazyflie();
+
 private:
 
 	cf_send_state send_state;
-#ifndef USE_EXT_RADIO
-	RF24 radio; // internal radio object
-#endif
+	RF24 *radio; // internal radio object
 
 	void dispatchPacket(); // parse packets after receiving
 	void requestNextTOCItem();
@@ -153,14 +136,10 @@ private:
 	bool _logReady; 
 	uint8_t _itemToFetch;
 	cf_toc_crc_pkt _logInfo; // keep this packet around
+    LogStorage *_logStorage;
 
-	//not sure I need to save these:
-	uint8_t _cePin;
-	uint8_t _csPin;
-	uint8_t _addrShort;
 	uint64_t _addrLong;
-	uint8_t _channel;
-	rf24_datarate_e _dataRate;
+    uint8_t _pipeNum;
 
 	// for keeping communication alive
 	uint8_t _commanderInterval;
