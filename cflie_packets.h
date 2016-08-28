@@ -50,6 +50,20 @@ struct cl_log_settings
 		uint8_t period;
 		log_var_info variables[14]; // no mem requests for now
 	};
+    void pack(uint8_t *out) {
+        memcpy(out, &command, 1);
+        memcpy(out+1, &blockID, 1);
+        if (command == 0x3) { // TODO: more enums/defines!
+            memcpy(out+2, &period, 1);
+        } else {
+            int loc = 2;
+            for (uint8_t i=0; i<14; i++){
+                memcpy(out+loc, &variables[i].log_type, 1);
+                memcpy(out+loc+1, &variables[i].varID, 1);
+                loc +=2;
+             }
+        }
+    }
 };
 
 struct cl_commander
@@ -114,12 +128,14 @@ struct cf_log_settings
 struct cf_log_data
 {
 	uint8_t blockID;
-	uint8_t timestamp1;
-	uint8_t timestamp2;
-	uint8_t timestamp3; //sweet jesus...
+    uint32_t timestamp;
 	uint8_t values[28];
     void unpack(uint8_t *out) {
-        //TBD
+        blockID = out[0];
+        timestamp = out[3];
+        timestamp = (timestamp << 8) + out[2];
+        timestamp = (timestamp << 8) + out[1]; // TODO: check byte order
+        memcpy(values, out+4, 28);
     }
 };
 

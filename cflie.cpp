@@ -20,7 +20,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <cstdio>
 
 Crazyflie::Crazyflie(RF24 *extRadio, uint64_t radioAddr, uint8_t pipeNum)
-	: radio(extRadio),_busy(0),  _logReady(false), _logInfo(), 
+	: radio(extRadio),_busy(0), _logReady(false), _logBlockReady(false), _logInfo(), 
      _addrLong(radioAddr), _pipeNum(pipeNum),  _keepAlive(false)
 {
 
@@ -61,9 +61,7 @@ void Crazyflie::prepareCommanderPacket()
 	_outPacketLen = 15;
     c.pack(_outgoing+1);
 	send_state = COMMANDER;
-
 }
-
 
 void Crazyflie::initLogSystem()
 {
@@ -82,6 +80,57 @@ void Crazyflie::initLogSystem()
 
 void Crazyflie::requestRSSILog()
 {
+    if (_busy) return;
+    _busy = _busy | BUSY_LOG_DATA;
+    cl_log_settings pkt = {0};
+    pkt.command = 0x00; // TODO: make a define or enum
+    pkt.blockID=1;
+    pkt.variables[0].log_type = LOG_UINT8;
+    pkt.variables[0].varID = 51;
+
+    _outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2| (CHANNEL_SETTINGS & 0x3);
+    pkt.pack(_outgoing+1);
+
+    send_state = LOG_DATA;
+    _outPacketLen = 5;
+}
+
+void Crazyflie::stopRSSILog()
+{
+    if (_busy) return;
+    _busy = _busy | BUSY_LOG_DATA;
+    cl_log_settings pkt = {0};
+    pkt.command = 0x04;
+    pkt.blockID=1;
+    _outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2| (CHANNEL_SETTINGS & 0x3);
+    pkt.pack(_outgoing+1);
+    send_state = LOG_DATA;
+    _outPacketLen = 3;
+}
+
+void Crazyflie::startRSSILog()
+{
+    if (_busy) return;
+    _busy = _busy | BUSY_LOG_DATA;
+    cl_log_settings pkt = {0};
+    pkt.command = 0x03; // TODO: make a define or enum
+    pkt.blockID=1;
+    pkt.period = 7;
+
+    _outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2| (CHANNEL_SETTINGS & 0x3);
+    pkt.pack(_outgoing+1);
+
+    send_state = LOG_DATA;
+    _outPacketLen = 4;
+}
+
+void Crazyflie::prepareDummyPacket()
+{
+    if (_busy) return;
+   memset(_outgoing, 0, 32);
+   _outgoing[0] = 0xFF;
+   send_state = DUMMY;
+   _outPacketLen = 1;
 }
 
 
@@ -103,25 +152,14 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 		prepareCommanderPacket();
 	}
 
-	// if we are not busy, no need to be here
-	if (!_busy) {
-		debug("Nothing to do");
-		return;
-	}
-	// First, stop listening so we can talk.
+    prepareDummyPacket();
 	radio->stopListening();
 
     radio->openWritingPipe(_addrLong);
 	// payload should already be set up
 	
 	// send the packet. Blocks until sent
-    //printOutgoingPacket();
-    if (send_state == DUMMY) {
-        uint8_t dummyVal = 0xff;
-        radio->write(&dummyVal, 1);
-    } else {
-	    radio->write(_outgoing, _outPacketLen);
-    }
+    radio->write(_outgoing, _outPacketLen);
 	// unset commander flag if set - will be reset next loop if keepalive is on
 	if ((_busy & BUSY_COMMANDER)) {
 		_busy &= ~BUSY_COMMANDER;
@@ -141,7 +179,7 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 
 	if (didTimeout)
 	{
-		debug("response timed out");
+		printf("response timed out\n");
 	}
 	else
 	{
@@ -157,73 +195,134 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 
 }
 
+void Crazyflie::handleTocPacket()
+{
+    // first assume it's a crc packet
+    uint8_t command = _incoming[1];
+    switch (command) {
+        case CMD_GET_INFO:
+            {
+                // it is CRC
+                cf_toc_crc_pkt p;
+
+                p.unpack(_incoming+1);
+
+                if (p.crc != _logInfo.crc || p.num != _logInfo.num) {
+                    _logInfo.unpack(_incoming+1);
+                    send_state = LOG_TOC;
+                    _itemToFetch = 0;
+                    requestNextTOCItem();
+                    printf("TOC size: %d\n", _logInfo.num); 
+                }   
+
+                break;
+            }
+        case CMD_GET_ITEM:
+            // actually it was a toc item request
+            {
+                if (_logInfo.num == 0)
+                    break;
+
+                cf_toc_item_pkt p;
+                p.unpack(_incoming+1);
+
+                uint8_t fetchedItem = p.index;
+                send_state = LOG_TOC;
+                if (fetchedItem < _itemToFetch) {
+                    send_state = DUMMY;
+                }
+                else
+                    if (fetchedItem == _itemToFetch) {
+                        uint8_t groupEnd = 0;
+                        while (p.varName[groupEnd] != '\0') groupEnd++;
+                        p.varName[groupEnd] = '.';
+                        debug("Got variable %s, type %x \n", p.varName, p.varType);
+                        _logStorage->setVariable(fetchedItem, (LogVarType)p.varType, p.varName);
+                        _itemToFetch += 1;
+                        send_state = LOG_TOC;
+                    }
+                if (_itemToFetch >= _logInfo.num) {
+                    _busy &= ~BUSY_LOG_TOC;
+                    _logReady = true;
+                    send_state = DUMMY;
+                }
+                else {
+                    requestNextTOCItem();
+                    send_state = LOG_TOC;
+                }
+                uint8_t groupEnd = 0;
+                while (p.varName[groupEnd] != '\0') groupEnd++;
+
+                break;
+            }
+        default:
+            break;
+    }
+}
+
+void Crazyflie::handleLogBlockPacket()
+{
+    uint8_t command = _incoming[1];
+    uint8_t retStatus = _incoming[3];
+    _busy &= ~BUSY_LOG_DATA;   
+    send_state = DUMMY;
+    switch (command) {
+        case 0x00:
+            {
+                // ignoring block id for now
+                if (retStatus == 0 || retStatus == 0x11) {
+                    // created or existing
+                    _logBlockReady = true;
+                    startRSSILog();
+                } break;
+            }
+        case 0x03:
+            {
+                break;
+            }
+        default:
+            printf("Unknown log settings command: %x\n", command);
+            break;
+    }
+    if (retStatus != 0) {
+        printf("Error starting log block: %x\n", retStatus);
+    }
+
+}
+
+void Crazyflie::handleLogDataPacket()
+{
+    cf_log_data pkt = {0};
+    pkt.unpack(_incoming+1);
+    printOutgoingPacket();
+    printf("[%08d] %x\n", pkt.timestamp, pkt.values[0]);
+}
+
 void Crazyflie::dispatchPacket()
 {
 	uint8_t port = (_incoming[0] >> 4);
 	uint8_t channel = (_incoming[0] & 0x3);
-	if (port == PORT_LOGGING && channel == CHANNEL_TOC) {
-		// first assume it's a crc packet
-		uint8_t command = _incoming[1];
-		switch (command) {
-		case CMD_GET_INFO:
-		{
-			// it is CRC
-            cf_toc_crc_pkt p;
-            
-            p.unpack(_incoming+1);
+    bool handled = false;
+	if (port == PORT_LOGGING) {
+        if  (channel == CHANNEL_TOC) {
+            handleTocPacket();
+            handled = true;
+        }
+        if (channel == CHANNEL_SETTINGS) {
+            handleLogBlockPacket();
+            handled = true;
+        }
+        if (channel == CHANNEL_DATA) {
+            handleLogDataPacket();
+            handled = true;
+        }
+    } else if (port == 0xf && channel == 0x3) {
+        _lastRSSI = _incoming[2];
+        printf("RSSI: %02X\n", _lastRSSI);
+        handled = true;
+    }
 
-            if (p.crc != _logInfo.crc || p.num != _logInfo.num) {
-                _logInfo.unpack(_incoming+1);
-                send_state = LOG_TOC;
-                _itemToFetch = 0;
-                requestNextTOCItem();
-                printf("TOC size: %d\n", _logInfo.num); 
-            }   
-
-			break;
-		}
-		case CMD_GET_ITEM:
-			// actually it was a toc item request
-		{
-			if (_logInfo.num == 0)
-				break;
-
-            cf_toc_item_pkt p;
-            p.unpack(_incoming+1);
-
-			uint8_t fetchedItem = p.index;
-			send_state = LOG_TOC;
-			if (fetchedItem < _itemToFetch) {
-				send_state = DUMMY;
-			}
-			else
-				if (fetchedItem == _itemToFetch) {
-                    uint8_t groupEnd = 0;
-                    while (p.varName[groupEnd] != '\0') groupEnd++;
-                    p.varName[groupEnd] = '.';
-                    debug("Got variable %s, type %x \n", p.varName, p.varType);
-                    _logStorage->setVariable(fetchedItem, (LogVarType)p.varType, p.varName);
-					_itemToFetch += 1;
-					send_state = LOG_TOC;
-				}
-			if (_itemToFetch >= _logInfo.num) {
-				_busy &= ~BUSY_LOG_TOC;
-				_logReady = true;
-				send_state = DUMMY;
-			}
-			else {
-				requestNextTOCItem();
-				send_state = LOG_TOC;
-			}
-			uint8_t groupEnd = 0;
-			while (p.varName[groupEnd] != '\0') groupEnd++;
-
-			break;
-		}
-		default:
-			break;
-		}
-	}
+    if (!handled) printf("Unknown packet type %02x%02x\n", port, channel);
 }
 
 void Crazyflie::requestNextTOCItem()

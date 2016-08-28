@@ -99,11 +99,10 @@ int main(int argc, char** argv){
     bool readyToFly = false;
     while (!readyToFly) {
         readyToFly = cf.hasLogInfo();
-        cf.sendAndReceive(200);
+        cf.sendAndReceive(50);
     }
     printf("Log TOC downloaded.\n");
 
-#define PRINT_TOC
 #ifdef PRINT_TOC
     unsigned int logSize = cf.getLogTocSize();
     for (unsigned int i =0; i!=logSize; i++) {
@@ -112,10 +111,9 @@ int main(int argc, char** argv){
     }
 #endif
 
-#define NOFLY 1
-
-#if !NOFLY
-    cf.startCommander();
+//    cf.startCommander();
+#define DOFLY 0
+#if DOFLY
 
     startTime = millis();
 
@@ -125,6 +123,9 @@ int main(int argc, char** argv){
 
     cf.setCommanderSetpoint(0,0,0,35000);
 #endif
+
+   cf.requestRSSILog();
+  //  cf.stopRSSILog();
     while (1) {
         cf.sendAndReceive(100);
     }

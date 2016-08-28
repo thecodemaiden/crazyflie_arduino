@@ -96,7 +96,12 @@ public:
 	
 	void initLogSystem();
     void requestRSSILog();
+    void startRSSILog();
+    void stopRSSILog();
+
 	void sendAndReceive(uint32_t timeout=50);
+
+    uint8_t getLastRSSI();
 
 	// for debugging
 	void printOutgoingPacket();
@@ -119,8 +124,13 @@ private:
 	RF24 *radio; // internal radio object
 
 	void dispatchPacket(); // parse packets after receiving
+    void handleTocPacket();
+    void handleLogBlockPacket();
+    void handleLogDataPacket();
 	void requestNextTOCItem();
+
 	void prepareCommanderPacket();
+    void prepareDummyPacket();
 
 	// for radio sending
 	uint8_t _outPacketLen;
@@ -134,9 +144,13 @@ private:
 
 	// have we gotten the TOC and the full list?
 	bool _logReady; 
+    bool _logBlockReady;
 	uint8_t _itemToFetch;
 	cf_toc_crc_pkt _logInfo; // keep this packet around
     LogStorage *_logStorage;
+
+    // from raw ack packet
+    uint8_t _lastRSSI;
 
 	uint64_t _addrLong;
     uint8_t _pipeNum;
