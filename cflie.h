@@ -74,12 +74,6 @@ struct toc_item {
 	char name[28];
 	uint32_t value; // 400 extra bytes won't kill me
 };
-//toc_item _TOC[100];
-
-/*struct log_block {
-	uint8_t id;
-	uint8_t vars[]
-};*/
 
 // Busy reasons
 #define BUSY_LOG_TOC (1<<0)

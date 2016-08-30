@@ -20,8 +20,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <cstdio>
 
 Crazyflie::Crazyflie(RF24 *extRadio, uint64_t radioAddr, uint8_t pipeNum)
-	: radio(extRadio),_busy(0), _logReady(false), _logBlockReady(false), _logInfo(), 
-     _addrLong(radioAddr), _pipeNum(pipeNum),  _keepAlive(false)
+	: radio(extRadio), _busy(0), _logReady(false), _logBlockReady(false),
+      _logInfo(), _addrLong(radioAddr), _pipeNum(pipeNum),  _keepAlive(false)
 {
 
     _logStorage = new LogStorage();
@@ -83,7 +83,7 @@ void Crazyflie::requestRSSILog()
     if (_busy) return;
     _busy = _busy | BUSY_LOG_DATA;
     cl_log_settings pkt = {0};
-    pkt.command = 0x00; // TODO: make a define or enum
+    pkt.command = CONTROL_CREATE_BLOCK;
     pkt.blockID=1;
     pkt.variables[0].log_type = LOG_UINT8;
     pkt.variables[0].varID = 51;
@@ -100,7 +100,7 @@ void Crazyflie::stopRSSILog()
     if (_busy) return;
     _busy = _busy | BUSY_LOG_DATA;
     cl_log_settings pkt = {0};
-    pkt.command = 0x04;
+    pkt.command = CONTROL_STOP_BLOCK;
     pkt.blockID=1;
     _outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 0x3 << 2| (CHANNEL_SETTINGS & 0x3);
     pkt.pack(_outgoing+1);
@@ -113,7 +113,7 @@ void Crazyflie::startRSSILog()
     if (_busy) return;
     _busy = _busy | BUSY_LOG_DATA;
     cl_log_settings pkt = {0};
-    pkt.command = 0x03; // TODO: make a define or enum
+    pkt.command = CONTROL_START_BLOCK;
     pkt.blockID=1;
     pkt.period = 7;
 
@@ -165,8 +165,8 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 		_busy &= ~BUSY_COMMANDER;
 	}
 
-	// start listening for an ACK
     //radio->openReadingPipe(_pipeNum, _addrLong);
+	// start listening for an ACK
 	radio->startListening();
 	// Wait here until we get all responses, or timeout
 	bool didTimeout = false;
@@ -179,7 +179,7 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 
 	if (didTimeout)
 	{
-		printf("response timed out\n");
+		debug("response timed out\n");
 	}
 	else
 	{
@@ -267,7 +267,7 @@ void Crazyflie::handleLogBlockPacket()
     _busy &= ~BUSY_LOG_DATA;   
     send_state = DUMMY;
     switch (command) {
-        case 0x00:
+        case CONTROL_CREATE_BLOCK:
             {
                 // ignoring block id for now
                 if (retStatus == 0 || retStatus == 0x11) {
@@ -276,7 +276,7 @@ void Crazyflie::handleLogBlockPacket()
                     startRSSILog();
                 } break;
             }
-        case 0x03:
+        case CONTROL_START_BLOCK:
             {
                 break;
             }
@@ -294,7 +294,6 @@ void Crazyflie::handleLogDataPacket()
 {
     cf_log_data pkt = {0};
     pkt.unpack(_incoming+1);
-    printOutgoingPacket();
     printf("[%08d] %x\n", pkt.timestamp, pkt.values[0]);
 }
 
@@ -318,7 +317,7 @@ void Crazyflie::dispatchPacket()
         }
     } else if (port == 0xf && channel == 0x3) {
         _lastRSSI = _incoming[2];
-        printf("RSSI: %02X\n", _lastRSSI);
+        printf("[%02d] RSSI: %02X\n", _pipeNum, _lastRSSI);
         handled = true;
     }
 
@@ -363,7 +362,7 @@ void Crazyflie::stopCommander()
 void Crazyflie::printOutgoingPacket()
 {
     printf("Outgoing length: %d\n", _outPacketLen);    
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < _outPacketLen; i++) {
         printf("%02x ", _outgoing[i]);
     }
     printf("\n");
@@ -373,7 +372,7 @@ void Crazyflie::printIncomingPacket()
 {
     printf("Incoming length: %d\n", _inPacketLen);    
 
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < _inPacketLen; i++) {
         printf("%02x ", _incoming[i]);
     }
     printf("\n");

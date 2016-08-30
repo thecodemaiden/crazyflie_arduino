@@ -19,6 +19,13 @@ struct Setpoint
 };
 
 
+Crazyflie *flies[6];
+int nReady = 0;
+int nFlies = 0;
+
+#define FULL_ADDR(X) (0xE7E7E7E7 ## X)
+
+
 void initRadio(RF24 &radio)
 {
 	radio.begin();
@@ -29,15 +36,33 @@ void initRadio(RF24 &radio)
 	radio.setPALevel(RF24_PA_LOW);
 	radio.setChannel(0x50);
 	radio.setDataRate(RF24_250KBPS);
-	radio.setRetries(15, 3);
+	radio.setRetries(15, 1);
 	radio.setCRCLength(RF24_CRC_16);
-	radio.openWritingPipe(0xE7E7E7E7E7L);
-	radio.openReadingPipe(1, 0xE7E7E7E7E7L);
+	radio.openWritingPipe(FULL_ADDR(E7));
+	radio.openReadingPipe(1, FULL_ADDR(E7));
 
 	//runTime = millis();
 
 	// Start listening
 	radio.startListening();
+}
+
+void cleanup()
+{
+    for (int i=0; i< nFlies; i++) {
+        delete flies[i];
+    }
+}
+
+void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
+{
+    if (nFlies < 6) {
+        Crazyflie *cf = new Crazyflie(radio, address, pipeNum);
+        flies[nFlies++] = cf;
+        radio->stopListening();
+        radio->openReadingPipe(nFlies, address);
+        radio->startListening();
+    }
 }
 
 #define itinLen 5
@@ -88,47 +113,61 @@ void setupItinerary()
 
 #define RSSI_IDX 51
 int main(int argc, char** argv){
+    setupItinerary();
+
     RF24 radio(26,10);
     initRadio(radio);
 
-    radio.printDetails();
-    Crazyflie cf(&radio);
+    addCrazyflie(&radio, FULL_ADDR(E6), 1);
+    addCrazyflie(&radio, FULL_ADDR(E7), 2);
 
-    setupItinerary();
-    cf.initLogSystem();
-    bool readyToFly = false;
-    while (!readyToFly) {
-        readyToFly = cf.hasLogInfo();
-        cf.sendAndReceive(50);
+    radio.printDetails();
+
+    for (int j=0; j<nFlies; j++) {
+        flies[j]->initLogSystem();
     }
-    printf("Log TOC downloaded.\n");
+     
+    bool allReady = false;
+    while (!allReady) {
+        int nReady = 0;
+        for (int j=0; j<nFlies; j++) {
+            Crazyflie *cf = flies[j];
+            cf->sendAndReceive(50);
+            if (cf->hasLogInfo()) {
+                ++nReady;
+                //we can do other things...
+            }
+            allReady = (nReady == nFlies);
+        }
+    }
+    printf("All TOCs downloaded.\n");
 
 #ifdef PRINT_TOC
-    unsigned int logSize = cf.getLogTocSize();
+    unsigned int logSize = cf->getLogTocSize();
     for (unsigned int i =0; i!=logSize; i++) {
-        const LogVariable *v = cf.getLogVariable(i);
+        const LogVariable *v = cf->getLogVariable(i);
         printf("%d:\t%s\n", i, v->name);
     }
 #endif
 
-//    cf.startCommander();
 #define DOFLY 0
 #if DOFLY
 
+    cf->startCommander();
     startTime = millis();
 
-    runItinerary(&cf);
+    runItinerary(cf);
 
     printf("Itinerary complete.\n");
 
-    cf.setCommanderSetpoint(0,0,0,35000);
+    cf->setCommanderSetpoint(0,0,0,35000);
 #endif
 
-   cf.requestRSSILog();
-  //  cf.stopRSSILog();
     while (1) {
-        cf.sendAndReceive(100);
+        for (int i=0; i<nFlies; i++)
+            flies[i]->sendAndReceive(100);
     }
+    cleanup();
 
     return 0;
 }
