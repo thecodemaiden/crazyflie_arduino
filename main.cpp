@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include "cflie.h"
 #include "cflie_log.h"
+#include <vector>
+#include <memory>
 
 using namespace std;
 
@@ -15,9 +17,50 @@ struct Setpoint
     float roll;
     float yaw;
     int16_t thrust;
-    Setpoint():afterTime(0), pitch(0), roll(0), yaw(0), thrust(0) {}
+    Setpoint(unsigned long afterTime=0, int16_t thrust=0,
+        float pitch=0, float roll=0, float yaw=0)
+    :afterTime(afterTime), pitch(pitch), roll(roll), yaw(yaw), thrust(thrust) {}
 };
 
+class Itinerary
+{
+    std::vector<shared_ptr<Setpoint> > setpoints;
+    size_t nextIdx;
+    bool started;
+    unsigned long startTime;
+    Crazyflie *copter;
+
+public:
+    void addSetpoint(shared_ptr<Setpoint> sp)
+    {
+        setpoints.push_back(sp);
+    }
+
+    Itinerary(Crazyflie *cf)
+        :nextIdx(0), started(false), startTime(0) 
+    {
+        copter = cf;
+    }
+
+    bool tick() {
+        // return true when done
+        unsigned long now = millis();
+        if (!started) {
+            startTime = now;
+            started = true;
+        }
+        if (nextIdx == setpoints.size()) return true;
+        shared_ptr<Setpoint> next = setpoints.at(nextIdx);
+
+        if (startTime + next->afterTime <= now) {
+            printf("Executing step %d\n", nextIdx);
+            copter->setCommanderSetpoint(next->pitch, next->roll, next->yaw, next->thrust);
+            ++nextIdx;
+        }
+        return false;
+    }
+
+};
 
 Crazyflie *flies[6];
 int nReady = 0;
@@ -41,15 +84,15 @@ void initRadio(RF24 &radio)
 	radio.openWritingPipe(FULL_ADDR(E7));
 	radio.openReadingPipe(1, FULL_ADDR(E7));
 
-	//runTime = millis();
-
 	// Start listening
 	radio.startListening();
 }
 
 void cleanup()
 {
-    for (int i=0; i< nFlies; i++) {
+    for (int i=0; i<nFlies; i++) {
+        flies[i]->setCommanderSetpoint(0,0,0,0);
+        flies[i]->sendAndReceive(50);
         delete flies[i];
     }
 }
@@ -65,61 +108,37 @@ void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
     }
 }
 
-#define itinLen 5
-
-Setpoint itinerary[itinLen];
-unsigned long startTime;
-
-void runItinerary(Crazyflie *copter)
-{
-    unsigned i=0;
-    Setpoint *next = &itinerary[i];
-
-    while (i<itinLen) {
-        unsigned long now = millis();
-        if (startTime + next->afterTime <= now) {
-            printf("Executing step %d\n", i);
-            copter->setCommanderSetpoint(next->pitch, next->roll, next->yaw, next->thrust);
-            ++i;
-            next = &itinerary[i];
-        }
-        copter->sendAndReceive(100);
-    }   
-}
-
 #define HOVER_THRUST 41000
 
-void setupItinerary()
+void setupItinerary(Itinerary *itin)
 {
-    itinerary[0].afterTime = 2000;
-    itinerary[0].thrust = 44000;
 
-    itinerary[1].afterTime = 3500;
-    itinerary[1].thrust = HOVER_THRUST;
+    shared_ptr<Setpoint> sp1(new Setpoint(2000,44000,0,0,0));
+    shared_ptr<Setpoint> sp2(new Setpoint(3500,HOVER_THRUST,0,0,0));
+    shared_ptr<Setpoint> sp3(new Setpoint(7000,HOVER_THRUST, 0,-5.0,0));
+    shared_ptr<Setpoint> sp4(new Setpoint(9000,HOVER_THRUST,0,10.0,0));
+    shared_ptr<Setpoint> sp5(new Setpoint(11000,37500,0,0,0));
 
-    itinerary[2].afterTime = 7000;
-    itinerary[2].roll = -5.0;
-    itinerary[2].thrust = HOVER_THRUST;
-
-    itinerary[3].afterTime = 9000;
-    itinerary[3].roll = 10.0;
-    itinerary[3].thrust = HOVER_THRUST;
-
-    itinerary[4].afterTime = 11000;
-    itinerary[4].thrust = 37500;
+    itin->addSetpoint(sp1);
+    itin->addSetpoint(sp2);
+    itin->addSetpoint(sp3);
+    itin->addSetpoint(sp4);
+    itin->addSetpoint(sp5);
 
 }
 
 
-#define RSSI_IDX 51
 int main(int argc, char** argv){
-    setupItinerary();
+
 
     RF24 radio(26,10);
     initRadio(radio);
 
     addCrazyflie(&radio, FULL_ADDR(E6), 1);
     addCrazyflie(&radio, FULL_ADDR(E7), 2);
+
+    Itinerary it = Itinerary(flies[0]);
+    setupItinerary(&it);
 
     radio.printDetails();
 
@@ -149,24 +168,19 @@ int main(int argc, char** argv){
         printf("%d:\t%s\n", i, v->name);
     }
 #endif
-
-#define DOFLY 0
-#if DOFLY
-
-    cf->startCommander();
-    startTime = millis();
-
-    runItinerary(cf);
-
-    printf("Itinerary complete.\n");
-
-    cf->setCommanderSetpoint(0,0,0,35000);
-#endif
-
-    while (1) {
-        for (int i=0; i<nFlies; i++)
-            flies[i]->sendAndReceive(100);
+    for (int j=0; j<nFlies; j++) {
+        flies[j]->setCommanderInterval(200);
+        flies[j]->startCommander();
     }
+
+    bool itinComplete = false;
+    while (!itinComplete) {
+        for (int i=0; i<nFlies; i++) {
+            flies[i]->sendAndReceive(50);
+            itinComplete = it.tick();
+        }
+    }
+
     cleanup();
 
     return 0;

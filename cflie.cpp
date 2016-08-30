@@ -32,8 +32,10 @@ Crazyflie::~Crazyflie()
     delete _logStorage;
 }
 
-void Crazyflie::setCommanderInterval(uint8_t msInt)
+void Crazyflie::setCommanderInterval(uint16_t msInt)
 {
+    if (msInt < 50) msInt = 50;
+    if (msInt > 500) msInt = 500;
 	_commanderInterval = msInt;
 }
 
@@ -148,11 +150,13 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 {
 
 	// is the commander on?
-	if (_keepAlive) {
+    unsigned long now = millis();
+    if (_keepAlive && (_lastCommanderTime + _commanderInterval < now)){
 		prepareCommanderPacket();
-	}
+	} else {
+        prepareDummyPacket();
+    }
 
-    prepareDummyPacket();
 	radio->stopListening();
 
     radio->openWritingPipe(_addrLong);

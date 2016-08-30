@@ -13,7 +13,7 @@
 
 DRIVER=SPIDEV
 CPUFLAGS=-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
-CFLAGS=-march=armv7-a -g -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Ofast -Wall -pthread 
+CFLAGS=-g $(CPUFLAGS) -Ofast -Wall -pthread -std=c++0x
 PREFIX=/usr/local
 LIB=rf24
 LIBNAME=librf24.so.1.1.7

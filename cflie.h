@@ -85,7 +85,7 @@ class Crazyflie {
 public:
 	Crazyflie(RF24 *radio, uint64_t radioAddr=0xE7E7E7E7E7L, uint8_t pipeNum=1);
 
-	void setCommanderInterval(uint8_t msInt); // clamps to <= 500ms
+	void setCommanderInterval(uint16_t msInt); // clamps to <= 500ms
 	void setCommanderSetpoint(float pitch, float roll, float yaw, uint16_t thrust);
 	
 	void initLogSystem();
@@ -126,12 +126,15 @@ private:
 	void prepareCommanderPacket();
     void prepareDummyPacket();
 
+	// for keeping communication alive
+	uint16_t _commanderInterval;
+    unsigned long _lastCommanderTime;
+
 	// for radio sending
 	uint8_t _outPacketLen;
 	uint8_t _outgoing[32];
 	uint8_t _inPacketLen;
 	uint8_t _incoming[32];
-	uint32_t lastCommanderTime;
 
 	// we will ignore other requests while we fetch the log info
 	uint8_t _busy;
@@ -149,8 +152,6 @@ private:
 	uint64_t _addrLong;
     uint8_t _pipeNum;
 
-	// for keeping communication alive
-	uint8_t _commanderInterval;
 	uint16_t _setThrust;
 	uint8_t _setPitch;
 	uint8_t _setRoll;
