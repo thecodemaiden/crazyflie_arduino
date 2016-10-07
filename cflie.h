@@ -93,7 +93,9 @@ public:
     void startRSSILog();
     void stopRSSILog();
 
-	void sendAndReceive(uint32_t timeout=50);
+	bool sendAndReceive(uint32_t timeout=50);
+    bool send();
+    bool receive(uint32_t timeout=50);
 
     uint8_t getLastRSSI();
 

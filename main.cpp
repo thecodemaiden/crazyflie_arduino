@@ -79,7 +79,7 @@ void initRadio(RF24 &radio)
 	radio.setPALevel(RF24_PA_LOW);
 	radio.setChannel(0x50);
 	radio.setDataRate(RF24_250KBPS);
-	radio.setRetries(15, 1);
+	radio.setRetries(15, 0);
 	radio.setCRCLength(RF24_CRC_16);
 	radio.openWritingPipe(FULL_ADDR(E7));
 	radio.openReadingPipe(1, FULL_ADDR(E7));
@@ -136,12 +136,16 @@ int main(int argc, char** argv){
 
     addCrazyflie(&radio, FULL_ADDR(E6), 1);
     addCrazyflie(&radio, FULL_ADDR(E7), 2);
+    addCrazyflie(&radio, FULL_ADDR(E5), 3);
+    addCrazyflie(&radio, FULL_ADDR(E4), 4);
+    addCrazyflie(&radio, FULL_ADDR(E3), 5);
 
-    Itinerary it = Itinerary(flies[0]);
+    Itinerary it = Itinerary(flies[1]);
     setupItinerary(&it);
 
     radio.printDetails();
 
+/*
     for (int j=0; j<nFlies; j++) {
         flies[j]->initLogSystem();
     }
@@ -160,7 +164,7 @@ int main(int argc, char** argv){
         }
     }
     printf("All TOCs downloaded.\n");
-
+*/
 #ifdef PRINT_TOC
     unsigned int logSize = cf->getLogTocSize();
     for (unsigned int i =0; i!=logSize; i++) {
@@ -169,18 +173,24 @@ int main(int argc, char** argv){
     }
 #endif
     for (int j=0; j<nFlies; j++) {
+        flies[j]->requestRSSILog();
         flies[j]->setCommanderInterval(200);
         flies[j]->startCommander();
     }
-
     bool itinComplete = false;
+    int sendNum = 0;
     while (!itinComplete) {
         for (int i=0; i<nFlies; i++) {
             flies[i]->sendAndReceive(50);
+            sendNum += 1;
+            printf("send[%02d][%lu]%d\n", i+1, millis(), sendNum);
+#ifdef DOFLY
             itinComplete = it.tick();
+#else
+            delay(100);
+#endif
         }
     }
-
     cleanup();
 
     return 0;

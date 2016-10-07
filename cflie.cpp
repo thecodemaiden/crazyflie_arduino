@@ -146,9 +146,8 @@ bool Crazyflie::isBusy()
 	return (bool)_busy;
 }
 
-void Crazyflie::sendAndReceive(uint32_t timeout)
+bool Crazyfle::send()
 {
-
 	// is the commander on?
     unsigned long now = millis();
     if (_keepAlive && (_lastCommanderTime + _commanderInterval < now)){
@@ -163,19 +162,25 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 	// payload should already be set up
 	
 	// send the packet. Blocks until sent
-    radio->write(_outgoing, _outPacketLen);
+    bool didSend = radio->write(_outgoing, _outPacketLen);
 	// unset commander flag if set - will be reset next loop if keepalive is on
-	if ((_busy & BUSY_COMMANDER)) {
+	if (didSend && (_busy & BUSY_COMMANDER)) {
 		_busy &= ~BUSY_COMMANDER;
 	}
 
+    return didSend;
+
+}
+
+bool Crazyflie::receive(uint32_t timeout)
+{
     //radio->openReadingPipe(_pipeNum, _addrLong);
 	// start listening for an ACK
 	radio->startListening();
 	// Wait here until we get all responses, or timeout
 	bool didTimeout = false;
 	unsigned long start = millis();
-	while (!radio->available() && !didTimeout)
+	while (!radio->isAckPayloadAvailable() && !didTimeout)
 	{
 		if (millis() - start > timeout)
 			didTimeout = true;
@@ -196,7 +201,14 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 
 		dispatchPacket();
 	}
+    return !didTimeout;
+}
 
+/*
+bool Crazyflie::sendAndReceive(uint32_t timeout)
+{
+    send();
+    receive(timeout);
 }
 
 void Crazyflie::handleTocPacket()
@@ -263,6 +275,7 @@ void Crazyflie::handleTocPacket()
             break;
     }
 }
+*/
 
 void Crazyflie::handleLogBlockPacket()
 {
@@ -298,7 +311,7 @@ void Crazyflie::handleLogDataPacket()
 {
     cf_log_data pkt = {0};
     pkt.unpack(_incoming+1);
-    printf("[%08d] %x\n", pkt.timestamp, pkt.values[0]);
+    printf("log[%02d][%08d] %x\n", _pipeNum, pkt.timestamp, pkt.values[0]);
 }
 
 void Crazyflie::dispatchPacket()
@@ -321,7 +334,7 @@ void Crazyflie::dispatchPacket()
         }
     } else if (port == 0xf && channel == 0x3) {
         _lastRSSI = _incoming[2];
-        printf("[%02d] RSSI: %02X\n", _pipeNum, _lastRSSI);
+        printf("[%lu][%02d] RSSI: %02X\n", millis(), _pipeNum, _lastRSSI);
         handled = true;
     }
 
