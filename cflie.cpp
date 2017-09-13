@@ -45,6 +45,7 @@ void Crazyflie::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_
 	_setPitch = pitch;
 	_setRoll = roll;
 	_setYaw = yaw;
+	_lastCommanderTime = millis();
 }
 
 void Crazyflie::prepareCommanderPacket()
@@ -153,7 +154,7 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
     unsigned long now = millis();
     if (_keepAlive && (_lastCommanderTime + _commanderInterval < now)){
 		prepareCommanderPacket();
-	} else {
+	} else if (!_busy) {
         prepareDummyPacket();
     }
 
@@ -161,7 +162,6 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 
     radio->openWritingPipe(_addrLong);
 	// payload should already be set up
-	
 	// send the packet. Blocks until sent
     radio->write(_outgoing, _outPacketLen);
 	// unset commander flag if set - will be reset next loop if keepalive is on
@@ -243,6 +243,7 @@ void Crazyflie::handleTocPacket()
                         debug("Got variable %s, type %x \n", p.varName, p.varType);
                         _logStorage->setVariable(fetchedItem, (LogVarType)p.varType, p.varName);
                         _itemToFetch += 1;
+			printf("Copter %d on log item %d\n",_pipeNum,_itemToFetch);
                         send_state = LOG_TOC;
                     }
                 if (_itemToFetch >= _logInfo.num) {
@@ -321,7 +322,7 @@ void Crazyflie::dispatchPacket()
         }
     } else if (port == 0xf && channel == 0x3) {
         _lastRSSI = _incoming[2];
-        printf("[%02d] RSSI: %02X\n", _pipeNum, _lastRSSI);
+        //printf("[%02d] RSSI: %02X\n", _pipeNum, _lastRSSI);
         handled = true;
     }
 

@@ -110,18 +110,12 @@ void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
 
 #define HOVER_THRUST 41000
 
-void setupItinerary(Itinerary *itin)
+void setupItinerary(Itinerary *itin, int offset)
 {
 
-    shared_ptr<Setpoint> sp1(new Setpoint(2000,44000,0,0,0));
-    shared_ptr<Setpoint> sp2(new Setpoint(3500,HOVER_THRUST,0,0,0));
-    shared_ptr<Setpoint> sp3(new Setpoint(7000,HOVER_THRUST, 0,-5.0,0));
-    shared_ptr<Setpoint> sp4(new Setpoint(9000,HOVER_THRUST,0,10.0,0));
-    shared_ptr<Setpoint> sp5(new Setpoint(11000,37500,0,0,0));
+    shared_ptr<Setpoint> sp4(new Setpoint(2000+offset,10000,0,10.0,0));
+    shared_ptr<Setpoint> sp5(new Setpoint(4000+offset,8000,0,0,0));
 
-    itin->addSetpoint(sp1);
-    itin->addSetpoint(sp2);
-    itin->addSetpoint(sp3);
     itin->addSetpoint(sp4);
     itin->addSetpoint(sp5);
 
@@ -134,11 +128,13 @@ int main(int argc, char** argv){
     RF24 radio(26,10);
     initRadio(radio);
 
-    addCrazyflie(&radio, FULL_ADDR(E6), 1);
-    addCrazyflie(&radio, FULL_ADDR(E7), 2);
+    addCrazyflie(&radio, FULL_ADDR(E7), 1);
+    addCrazyflie(&radio, FULL_ADDR(E6), 2);
 
     Itinerary it = Itinerary(flies[0]);
-    setupItinerary(&it);
+    setupItinerary(&it, 0);
+    Itinerary it2 = Itinerary(flies[1]);
+    setupItinerary(&it2, 1500);
 
     radio.printDetails();
 
@@ -173,11 +169,13 @@ int main(int argc, char** argv){
         flies[j]->startCommander();
     }
 
-    bool itinComplete = false;
-    while (!itinComplete) {
+    bool itin1Complete = false;
+    bool itin2Complete = false;
+    while (!itin1Complete || !itin2Complete) {
         for (int i=0; i<nFlies; i++) {
             flies[i]->sendAndReceive(50);
-            itinComplete = it.tick();
+            itin1Complete = it.tick();
+            itin2Complete = it2.tick();
         }
     }
 
