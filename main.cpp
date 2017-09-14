@@ -10,6 +10,8 @@
 
 using namespace std;
 
+#define MAX_FLIES 6
+
 struct Setpoint
 {
     unsigned long afterTime;
@@ -36,11 +38,10 @@ public:
         setpoints.push_back(sp);
     }
 
+    Crazyflie* getCopter() { return copter;}
+
     Itinerary(Crazyflie *cf)
-        :nextIdx(0), started(false), startTime(0) 
-    {
-        copter = cf;
-    }
+        :nextIdx(0), started(false), startTime(0), copter(cf){}
 
     bool tick() {
         // return true when done
@@ -62,7 +63,7 @@ public:
 
 };
 
-Crazyflie *flies[6];
+Crazyflie *flies[MAX_FLIES];
 int nReady = 0;
 int nFlies = 0;
 
@@ -99,12 +100,13 @@ void cleanup()
 
 void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
 {
-    if (nFlies < 6) {
+    if (nFlies < MAX_FLIES) {
         Crazyflie *cf = new Crazyflie(radio, address, pipeNum);
-        flies[nFlies++] = cf;
+        flies[nFlies] = cf;
         radio->stopListening();
         radio->openReadingPipe(nFlies, address);
         radio->startListening();
+	nFlies +=1;
     }
 }
 
@@ -112,10 +114,18 @@ void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
 
 void setupItinerary(Itinerary *itin, int offset)
 {
+    // each drone buzzes for 1 second, offset 2s each
+    // then they all buzz together at 13s for 1.5s   
 
-    shared_ptr<Setpoint> sp4(new Setpoint(2000+offset,10000,0,10.0,0));
-    shared_ptr<Setpoint> sp5(new Setpoint(4000+offset,8000,0,0,0));
+    shared_ptr<Setpoint> sp1(new Setpoint(1000+offset,10000,0,10.0,0));
+    shared_ptr<Setpoint> sp2(new Setpoint(2000+offset,0,0,10.0,0));
+    shared_ptr<Setpoint> sp3(new Setpoint(13000,10000,0,10.0,0));
+    shared_ptr<Setpoint> sp4(new Setpoint(14500,0,0,10.0,0));
+    shared_ptr<Setpoint> sp5(new Setpoint(15000,0,0,10.0,0));
 
+    itin->addSetpoint(sp1);
+    itin->addSetpoint(sp2);
+    itin->addSetpoint(sp3);
     itin->addSetpoint(sp4);
     itin->addSetpoint(sp5);
 
@@ -123,20 +133,26 @@ void setupItinerary(Itinerary *itin, int offset)
 
 
 int main(int argc, char** argv){
-
+    Itinerary *plans[MAX_FLIES]={NULL};
 
     RF24 radio(26,10);
     initRadio(radio);
 
     addCrazyflie(&radio, FULL_ADDR(E7), 1);
     addCrazyflie(&radio, FULL_ADDR(E6), 2);
-
-    Itinerary it = Itinerary(flies[0]);
-    setupItinerary(&it, 0);
-    Itinerary it2 = Itinerary(flies[1]);
-    setupItinerary(&it2, 1500);
+    addCrazyflie(&radio, FULL_ADDR(E5), 3);
+    addCrazyflie(&radio, FULL_ADDR(E4), 4);
+    addCrazyflie(&radio, FULL_ADDR(E3), 5);
+    addCrazyflie(&radio, FULL_ADDR(E2), 6);
 
     radio.printDetails();
+    for (int i=0; i<nFlies; i++) {
+	plans[i] = new Itinerary(flies[i]);
+	setupItinerary(plans[i], i*2000);
+    }
+
+
+#ifdef LOAD_LOG
 
     for (int j=0; j<nFlies; j++) {
         flies[j]->initLogSystem();
@@ -168,15 +184,21 @@ int main(int argc, char** argv){
         flies[j]->setCommanderInterval(200);
         flies[j]->startCommander();
     }
+#endif
 
-    bool itin1Complete = false;
-    bool itin2Complete = false;
-    while (!itin1Complete || !itin2Complete) {
-        for (int i=0; i<nFlies; i++) {
-            flies[i]->sendAndReceive(50);
-            itin1Complete = it.tick();
-            itin2Complete = it2.tick();
-        }
+    int nDone;
+    do { 
+	nDone = 0;
+	// execute the itineraries
+	for (int i=0; i<nFlies; i++) {
+	    plans[i]->getCopter()->sendAndReceive(50);
+	    if (plans[i]->tick()) nDone+=1;
+	}
+    } while (nDone < nFlies);
+	
+
+    for (int j=0; j<nFlies; j++) {
+	delete plans[j];
     }
 
     cleanup();

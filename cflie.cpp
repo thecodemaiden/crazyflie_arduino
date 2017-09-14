@@ -216,7 +216,7 @@ void Crazyflie::handleTocPacket()
                     send_state = LOG_TOC;
                     _itemToFetch = 0;
                     requestNextTOCItem();
-                    printf("TOC size: %d\n", _logInfo.num); 
+                    printf("[%d] TOC size: %d\n", _pipeNum, _logInfo.num); 
                 }   
 
                 break;
@@ -243,12 +243,13 @@ void Crazyflie::handleTocPacket()
                         debug("Got variable %s, type %x \n", p.varName, p.varType);
                         _logStorage->setVariable(fetchedItem, (LogVarType)p.varType, p.varName);
                         _itemToFetch += 1;
-			printf("Copter %d on log item %d\n",_pipeNum,_itemToFetch);
+			//printf("Copter %d on log item %d\n",_pipeNum,_itemToFetch);
                         send_state = LOG_TOC;
                     }
                 if (_itemToFetch >= _logInfo.num) {
                     _busy &= ~BUSY_LOG_TOC;
                     _logReady = true;
+		    printf("[%d] Log complete\n", _pipeNum);
                     send_state = DUMMY;
                 }
                 else {
