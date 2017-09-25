@@ -98,16 +98,17 @@ void cleanup()
     }
 }
 
-void addCrazyflie(RF24 *radio, uint64_t address, uint8_t pipeNum)
+uint8_t addCrazyflie(RF24 *radio, uint64_t address)
 {
     if (nFlies < MAX_FLIES) {
-        Crazyflie *cf = new Crazyflie(radio, address, pipeNum);
+        Crazyflie *cf = new Crazyflie(radio, address, nFlies);
         flies[nFlies] = cf;
         radio->stopListening();
         radio->openReadingPipe(nFlies, address);
         radio->startListening();
 	nFlies +=1;
     }
+    return (uint8_t)nFlies-1;
 }
 
 #define HOVER_THRUST 41000
@@ -119,9 +120,9 @@ void setupItinerary(Itinerary *itin, int offset)
 
     shared_ptr<Setpoint> sp1(new Setpoint(1000+offset,10000,0,10.0,0));
     shared_ptr<Setpoint> sp2(new Setpoint(2000+offset,0,0,10.0,0));
-    shared_ptr<Setpoint> sp3(new Setpoint(13000,10000,0,10.0,0));
-    shared_ptr<Setpoint> sp4(new Setpoint(14500,0,0,10.0,0));
-    shared_ptr<Setpoint> sp5(new Setpoint(15000,0,0,10.0,0));
+    shared_ptr<Setpoint> sp3(new Setpoint(14000,10000,0,10.0,0));
+    shared_ptr<Setpoint> sp4(new Setpoint(15500,0,0,10.0,0));
+    shared_ptr<Setpoint> sp5(new Setpoint(16000,0,0,10.0,0));
 
     itin->addSetpoint(sp1);
     itin->addSetpoint(sp2);
@@ -138,40 +139,30 @@ int main(int argc, char** argv){
     RF24 radio(26,10);
     initRadio(radio);
 
-    addCrazyflie(&radio, FULL_ADDR(E7), 1);
-    addCrazyflie(&radio, FULL_ADDR(E6), 2);
-    addCrazyflie(&radio, FULL_ADDR(E5), 3);
-    addCrazyflie(&radio, FULL_ADDR(E4), 4);
-    addCrazyflie(&radio, FULL_ADDR(E3), 5);
-    addCrazyflie(&radio, FULL_ADDR(E2), 6);
+    addCrazyflie(&radio, FULL_ADDR(E4));
+    addCrazyflie(&radio, FULL_ADDR(E7));
+    addCrazyflie(&radio, FULL_ADDR(E6));
+    addCrazyflie(&radio, FULL_ADDR(E5));
+    addCrazyflie(&radio, FULL_ADDR(E3));
+    addCrazyflie(&radio, FULL_ADDR(E2));
 
     radio.printDetails();
     for (int i=0; i<nFlies; i++) {
 	plans[i] = new Itinerary(flies[i]);
 	setupItinerary(plans[i], i*2000);
     }
-
-
+//#define LOAD_LOG
 #ifdef LOAD_LOG
-
+    // Loading logs in parallel takes too GD long
     for (int j=0; j<nFlies; j++) {
-        flies[j]->initLogSystem();
-    }
-     
-    bool allReady = false;
-    while (!allReady) {
-        int nReady = 0;
-        for (int j=0; j<nFlies; j++) {
-            Crazyflie *cf = flies[j];
+        Crazyflie *cf = flies[j];
+        cf->initLogSystem();
+        while(!cf->hasLogInfo()) {
             cf->sendAndReceive(50);
-            if (cf->hasLogInfo()) {
-                ++nReady;
-                //we can do other things...
-            }
-            allReady = (nReady == nFlies);
         }
+        printf("Crazyflie %d is ready\n", j+1);
     }
-    printf("All TOCs downloaded.\n");
+
 
 #ifdef PRINT_TOC
     unsigned int logSize = cf->getLogTocSize();
@@ -180,11 +171,12 @@ int main(int argc, char** argv){
         printf("%d:\t%s\n", i, v->name);
     }
 #endif
-    for (int j=0; j<nFlies; j++) {
-        flies[j]->setCommanderInterval(200);
-        flies[j]->startCommander();
-    }
 #endif
+    for (int j=0; j<nFlies; j++) {
+        flies[j]->setCommanderInterval(20);
+        flies[j]->startCommander();
+	flies[j]->sendAndReceive(50);
+    }
 
     int nDone;
     do { 

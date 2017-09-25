@@ -23,6 +23,7 @@ Crazyflie::Crazyflie(RF24 *extRadio, uint64_t radioAddr, uint8_t pipeNum)
 	: radio(extRadio), _busy(0), _logReady(false), _logBlockReady(false),
       _logInfo(), _addrLong(radioAddr), _pipeNum(pipeNum),  _keepAlive(false)
 {
+    _setThrust= _setPitch = _setYaw = _setRoll = 0;
 
     _logStorage = new LogStorage();
 }
@@ -153,8 +154,9 @@ void Crazyflie::sendAndReceive(uint32_t timeout)
 	// is the commander on?
     unsigned long now = millis();
     if (_keepAlive && (_lastCommanderTime + _commanderInterval < now)){
-		prepareCommanderPacket();
-	} else if (!_busy) {
+	prepareCommanderPacket();
+	_lastCommanderTime = now;
+    } else if (!_busy) {
         prepareDummyPacket();
     }
 
@@ -249,7 +251,6 @@ void Crazyflie::handleTocPacket()
                 if (_itemToFetch >= _logInfo.num) {
                     _busy &= ~BUSY_LOG_TOC;
                     _logReady = true;
-		    printf("[%d] Log complete\n", _pipeNum);
                     send_state = DUMMY;
                 }
                 else {
