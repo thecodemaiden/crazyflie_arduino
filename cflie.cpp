@@ -46,7 +46,7 @@ void Crazyflie::setCommanderSetpoint(float pitch, float roll, float yaw, uint16_
 	_setPitch = pitch;
 	_setRoll = roll;
 	_setYaw = yaw;
-	_lastCommanderTime = millis();
+	//_lastCommanderTime = millis();
 }
 
 void Crazyflie::prepareCommanderPacket()
