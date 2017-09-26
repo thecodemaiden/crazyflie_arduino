@@ -50,7 +50,7 @@ int main(int argc, char** argv){
 
     radio.printDetails();
 
-//#define LOAD_LOG
+#define LOAD_LOG
 #ifdef LOAD_LOG
     // Loading logs in parallel takes too GD long
         cf->initLogSystem();
@@ -70,26 +70,14 @@ int main(int argc, char** argv){
 	cf->setCommanderSetpoint(0,0,0,0);
 	cf->startCommander();
 
-	long nextTime;
-	
-	// pulse for 1.5s, rest for 1.5s, repeat 3x
-	for (int l=0; l<3; l++) {
-		nextTime = millis() + 1500;
-		cf->setCommanderSetpoint(0,0,0,0);
-		while (millis() < nextTime) {
-			cf->sendAndReceive(50);
-		}
-		nextTime = millis() + 1000;
-		cf->setCommanderSetpoint(0,0,0,10000);
-		while (millis() < nextTime) {
-			cf->sendAndReceive(50);
-		}
-		printf("Pulse 1\n");
+	cf->setMotorFrequency(1, 5000);
+	long until = millis()+3000;
+	while(millis() < until){
+	    cf->sendAndReceive(50);
 	}
 
+
 	cf->setCommanderSetpoint(0,0,0,0);
-	cf->sendAndReceive(50);
-	cf->sendAndReceive(50);
     delete cf;
 
     return 0;

@@ -326,7 +326,16 @@ void Crazyflie::dispatchPacket()
         _lastRSSI = _incoming[2];
         //printf("[%02d] RSSI: %02X\n", _pipeNum, _lastRSSI);
         handled = true;
-    }
+    } else if (port == 0x2 && channel == 0x3) {
+		handled = true;
+		printIncomingPacket();
+		_busy = _busy & (~BUSY_PARAMETER);
+		// RESPONSE OF PARAM SET
+		char *gname = (char *)(_incoming+2);
+		char *pname = (char *)(_incoming+9);
+		uint8_t errCode = (uint8_t)(_incoming[15]);
+		printf("PARAM %s.%s: %d\n", gname, pname, errCode);
+	}
 
     if (!handled) printf("Unknown packet type %02x%02x\n", port, channel);
 }
@@ -363,6 +372,28 @@ void Crazyflie::startCommander()
 void Crazyflie::stopCommander()
 {
 	_keepAlive = false;
+}
+
+void Crazyflie::setMotorFrequency(uint8_t mNum, uint16_t freq)
+{
+// use the set-by-name parameter function for now
+if (!_busy) {
+    _busy |= BUSY_PARAMETER;
+	memset(_outgoing,0,32);
+	// PORT 2, channel 3
+	_outgoing[0] = (0x2<<4)|(0x3);
+	_outgoing[1] = 0x00;
+	strncpy((char *)(_outgoing+2), "mtrsnd", 6);
+	strncpy((char *)(_outgoing+9), "freq", 4);
+	char lastChar = '0' + mNum;
+	_outgoing[13] = lastChar;
+	_outgoing[15] = 0x09; //uint16_t...
+	// finally the value
+    memcpy(_outgoing+16, &freq, 2);
+    _outPacketLen = 18;
+    printOutgoingPacket();
+}
+
 }
 
 

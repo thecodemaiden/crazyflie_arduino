@@ -65,6 +65,7 @@ typedef enum {
 	DUMMY = 0,
 	LOG_TOC,
 	LOG_DATA,
+	PARAM_SET,
 	COMMANDER
 } cf_send_state;
 
@@ -79,6 +80,7 @@ struct toc_item {
 #define BUSY_LOG_TOC (1<<0)
 #define BUSY_LOG_DATA (1<<1)
 #define BUSY_COMMANDER (1<<2)
+#define BUSY_PARAMETER (1<<3)
 
 
 class Crazyflie {
@@ -109,6 +111,7 @@ public:
 
     unsigned int getLogTocSize();
     const LogVariable *getLogVariable(unsigned int varID);
+    void setMotorFrequency(uint8_t mNum, uint16_t freq);
 
     ~Crazyflie();
 
