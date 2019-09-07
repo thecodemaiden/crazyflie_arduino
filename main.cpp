@@ -67,6 +67,8 @@ int nReady = 0;
 int nFlies = 0;
 
 #define FULL_ADDR(X) (0xE7E7E7E7 ## X)
+#define GET_LOGS 1
+#define PRINT_TOC 1
 
 
 void initRadio(RF24 &radio)
@@ -77,8 +79,8 @@ void initRadio(RF24 &radio)
 	radio.enableAckPayload();
 	radio.enableDynamicPayloads();
 	radio.setPALevel(RF24_PA_LOW);
-	radio.setChannel(0x50);
-	radio.setDataRate(RF24_250KBPS);
+	radio.setChannel(125);
+	radio.setDataRate(RF24_2MBPS);
 	radio.setRetries(15, 0);
 	radio.setCRCLength(RF24_CRC_16);
 	radio.openWritingPipe(FULL_ADDR(E7));
@@ -92,7 +94,10 @@ void cleanup()
 {
     for (int i=0; i<nFlies; i++) {
         flies[i]->setCommanderSetpoint(0,0,0,0);
-        flies[i]->sendAndReceive(50);
+        flies[i]->send();
+    }
+    for (int i=0; i<nFlies; i++) {
+	flies[i]->receive();
         delete flies[i];
     }
 }
@@ -134,18 +139,15 @@ int main(int argc, char** argv){
     RF24 radio(26,10);
     initRadio(radio);
 
-    addCrazyflie(&radio, FULL_ADDR(E6), 1);
-    addCrazyflie(&radio, FULL_ADDR(E7), 2);
-    addCrazyflie(&radio, FULL_ADDR(E5), 3);
-    addCrazyflie(&radio, FULL_ADDR(E4), 4);
-    addCrazyflie(&radio, FULL_ADDR(E3), 5);
+    addCrazyflie(&radio, FULL_ADDR(E7), 1);
 
-    Itinerary it = Itinerary(flies[1]);
+    Itinerary it = Itinerary(flies[0]);
     setupItinerary(&it);
 
     radio.printDetails();
 
-/*
+#ifdef GET_LOGS
+
     for (int j=0; j<nFlies; j++) {
         flies[j]->initLogSystem();
     }
@@ -154,9 +156,11 @@ int main(int argc, char** argv){
     while (!allReady) {
         int nReady = 0;
         for (int j=0; j<nFlies; j++) {
-            Crazyflie *cf = flies[j];
-            cf->sendAndReceive(50);
-            if (cf->hasLogInfo()) {
+            flies[j]->send();
+	}
+	for (int j=0; j<nFlies; j++) {
+	    flies[j]->receive(50);
+            if (flies[j]->hasLogInfo()) {
                 ++nReady;
                 //we can do other things...
             }
@@ -164,13 +168,13 @@ int main(int argc, char** argv){
         }
     }
     printf("All TOCs downloaded.\n");
-*/
 #ifdef PRINT_TOC
-    unsigned int logSize = cf->getLogTocSize();
+    unsigned int logSize = flies[0]->getLogTocSize();
     for (unsigned int i =0; i!=logSize; i++) {
-        const LogVariable *v = cf->getLogVariable(i);
+        const LogVariable *v = flies[0]->getLogVariable(i);
         printf("%d:\t%s\n", i, v->name);
     }
+#endif
 #endif
     for (int j=0; j<nFlies; j++) {
         flies[j]->requestRSSILog();
@@ -179,16 +183,23 @@ int main(int argc, char** argv){
     }
     bool itinComplete = false;
     int sendNum = 0;
+    bool sendResult = false;
     while (!itinComplete) {
         for (int i=0; i<nFlies; i++) {
-            flies[i]->sendAndReceive(50);
+		
+            sendResult = flies[i]->send();
             sendNum += 1;
-            printf("send[%02d][%lu]%d\n", i+1, millis(), sendNum);
+            printf("send[%02d][%lu] ", i+1, millis());
+	    if (!sendResult)
+                printf("failed \n");
+	    else
+	        printf("succeeded \n");
 #ifdef DOFLY
             itinComplete = it.tick();
 #else
-            delay(100);
+            delay(50);
 #endif
+	    flies[i]->receive(100);
         }
     }
     cleanup();

@@ -146,7 +146,7 @@ bool Crazyflie::isBusy()
 	return (bool)_busy;
 }
 
-bool Crazyfle::send()
+bool Crazyflie::send()
 {
 	// is the commander on?
     unsigned long now = millis();
@@ -210,6 +210,7 @@ bool Crazyflie::sendAndReceive(uint32_t timeout)
     send();
     receive(timeout);
 }
+*/
 
 void Crazyflie::handleTocPacket()
 {
@@ -275,7 +276,7 @@ void Crazyflie::handleTocPacket()
             break;
     }
 }
-*/
+
 
 void Crazyflie::handleLogBlockPacket()
 {
@@ -347,7 +348,7 @@ void Crazyflie::requestNextTOCItem()
 	debug("Preparing TOC item request: %d", _itemToFetch);
 
 	memset(_outgoing, 0, 32);
-	_outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 3 << 2 | (CHANNEL_TOC & 0x3);
+	_outgoing[0] = (PORT_LOGGING & 0xF) << 4 | 1 << 2 | (CHANNEL_TOC & 0x3);
     cl_toc_pkt p = {0};
 	p.command = CMD_GET_ITEM;
 	p.index = _itemToFetch;

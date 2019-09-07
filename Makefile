@@ -16,9 +16,9 @@ CPUFLAGS=-march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
 CFLAGS=-g $(CPUFLAGS) -Ofast -Wall -pthread -std=c++0x
 PREFIX=/usr/local
 LIB=rf24
-LIBNAME=librf24.so.1.1.7
-LIB_VERSION=1.1.7
-LIBSYMLINKS=librf24.so.1.1 librf24.so.1 librf24.so
+LIB_VERSION=1.3.3
+LIBNAME=librf24.so.$(LIB_VERSION)
+LIBSYMLINKS=librf24.so.1.3 librf24.so.1 librf24.so
 LIBDEPRECATE=librf24-bcm.so
 HEADER_DIR=/usr/local/include
 LIB_DIR=/usr/local/lib
